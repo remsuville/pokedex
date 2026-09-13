@@ -185,6 +185,7 @@ CREATE TABLE pokemon_gen (
   base_species TEXT,
   forme        TEXT,
   num          INTEGER,
+  sprite_id    INTEGER,        -- PokeAPI/sprites file stem: the dex number, or veekun's form id (10008 = Rotom-Heat)
   type1        TEXT,
   type2        TEXT,
   hp INTEGER, atk INTEGER, def INTEGER, spa INTEGER, spd INTEGER, spe INTEGER,
@@ -252,16 +253,27 @@ CREATE TABLE encounter (
 );
 
 CREATE TABLE move_gen (
-  move_id  TEXT NOT NULL,
-  gen      INTEGER NOT NULL,
-  name     TEXT,
-  type     TEXT,
-  category TEXT,
-  power    INTEGER,
-  accuracy INTEGER,   -- 0 = never misses
-  pp       INTEGER,
-  priority INTEGER,
+  move_id    TEXT NOT NULL,
+  gen        INTEGER NOT NULL,
+  name       TEXT,
+  type       TEXT,
+  category   TEXT,
+  power      INTEGER,
+  accuracy   INTEGER,   -- 0 = never misses
+  pp         INTEGER,
+  priority   INTEGER,
+  short_desc TEXT,      -- one line, e.g. '10% chance to paralyze the target.'
+  desc       TEXT,      -- full rules text; both are per generation
   PRIMARY KEY (move_id, gen)
+);
+
+CREATE TABLE ability_gen (
+  ability_id TEXT NOT NULL,
+  gen        INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  short_desc TEXT,
+  desc       TEXT,
+  PRIMARY KEY (ability_id, gen)
 );
 `);
 
@@ -475,12 +487,13 @@ console.log('Writing per-generation pokemon, learnsets and moves...');
 const gens = new Generations(Dex);
 
 const insPoke = db.prepare(`INSERT OR REPLACE INTO pokemon_gen VALUES
-  (@showdown_id,@gen,@species_id,@name,@base_species,@forme,@num,@type1,@type2,
+  (@showdown_id,@gen,@species_id,@name,@base_species,@forme,@num,@sprite_id,@type1,@type2,
    @hp,@atk,@def,@spa,@spd,@spe,@bst,@ability0,@ability1,@abilityH,
    @heightm,@weightkg,@prevo,@evo_level,@evo_type,@evo_item,@evo_move,@evo_condition,@evo_region)`);
 const insLearn = db.prepare('INSERT INTO learnset VALUES (?,?,?,?,?,?)');
 const insMove  = db.prepare(`INSERT OR REPLACE INTO move_gen VALUES
-  (@move_id,@gen,@name,@type,@category,@power,@accuracy,@pp,@priority)`);
+  (@move_id,@gen,@name,@type,@category,@power,@accuracy,@pp,@priority,@short_desc,@desc)`);
+const insAbility = db.prepare('INSERT OR REPLACE INTO ability_gen VALUES (?,?,?,?,?)');
 const insType  = db.prepare('INSERT INTO type_chart VALUES (?,?,?,?)');
 
 // Types a Pokémon can actually have. '???' is Curse's type in gens 2-4 and
@@ -527,7 +540,13 @@ for (const g of GENS) {
         accuracy: move.accuracy === true ? 0 : Number(move.accuracy),
         pp: move.pp ?? null,
         priority: move.priority ?? 0,
+        short_desc: move.shortDesc || null,
+        desc: move.desc || null,
       });
+    }
+
+    for (const ab of gen.abilities) {
+      insAbility.run(ab.id, g, ab.name, ab.shortDesc || null, ab.desc || null);
     }
 
     for (const sp of gen.species) {
@@ -548,6 +567,8 @@ for (const g of GENS) {
         base_species: sp.baseSpecies ?? null,
         forme: sp.forme ?? null,
         num: sp.num ?? null,
+        // forms veekun models get their own art; cosmetic ones share the species'
+        sprite_id: pokemonByID.get(sp.id) ? Number(pokemonByID.get(sp.id)!.id) : sp.num ?? null,
         type1: sp.types[0] ?? null,
         type2: sp.types[1] ?? null,
         hp: bs.hp, atk: bs.atk, def: bs.def, spa: bs.spa, spd: bs.spd, spe: bs.spe,

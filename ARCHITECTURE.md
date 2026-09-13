@@ -42,7 +42,7 @@ or typings. It cannot reconstruct a Gen 1 page.
  │ PokeAPI/     │            ▼                     │                    │
  │ sprites      │      ┌────────────┐         ┌─────────┐               │
  └──────────────┘      │ SQLite     │────────▶│ server  │◀──── /api ────┘
-                       │ 37 MB      │         │ Hono    │      /sprites
+                       │ 44 MB      │         │ Hono    │      /sprites
                        └────────────┘         │ :3000   │
                                               └─────────┘
 ```
@@ -86,9 +86,10 @@ The ETL's job is to reconcile the two.
 ├── package.json            Backend dependencies and scripts
 ├── tsconfig.json
 ├── next_steps.md           Roadmap
+├── SQL_GUIDE.md            Learning guide: SQL from scratch on this database, how each script uses it
 │
 ├── data/
-│   └── pokedex.sqlite      Build output — 37 MB, gitignored
+│   └── pokedex.sqlite      Build output — 44 MB, gitignored
 │
 ├── vendor/                 Third-party data — gitignored, cloned not committed
 │   ├── pokeapi/            veekun CSV dataset (41 MB, sparse checkout)
@@ -116,9 +117,12 @@ The ETL's job is to reconcile the two.
         │   └── dex.ts      useDex() hook and matchDex() name/number search
         ├── pages/
         │   ├── DexPage.tsx      /            national dex table, filter + sort
-        │   └── SpeciesPage.tsx  /pokemon/:id the species page
+        │   ├── SpeciesPage.tsx  /pokemon/:id the species page
+        │   └── SqlPage.tsx      /sql         read-only SQL console with schema sidebar
         └── components/
             ├── SearchBox.tsx   Header combobox, keyboard-navigable
+            ├── PixelSprite.tsx Game sprite at a whole-number scale, bottom-aligned
+            ├── Tooltip.tsx     Hover/focus/tap description popup for moves and abilities
             ├── TypeDefenses.tsx Weakness grid, one cell per attacking type
             ├── EvolutionChain.tsx Family tree, cards joined by method arrows
             ├── TypePill.tsx    Coloured type badge
@@ -149,8 +153,11 @@ Structure, in order:
 3. **The resolver** — `resolveSpeciesId()`, described below
 4. **Schema** — the `CREATE TABLE` block
 5. **Species pass** — writes generation-invariant data
-6. **Generation loop** — for each of gens 1–9, writes forms, learnsets, moves
-7. **Indexes** — built last, after bulk inserts, which is much faster
+6. **Machines pass** — TM/HM/TR numbers per generation
+7. **Encounters pass** — aggregates per-slot rows into per-spot rows
+8. **Generation loop** — for each of gens 1–9, writes the type chart, forms
+   (with evolution fields), learnsets and moves
+9. **Indexes** — built last, after bulk inserts, which is much faster
 
 **Edit this file when you want to:**
 
@@ -170,12 +177,13 @@ plain TypeScript objects.
 
 Contains:
 
-- **Type definitions** (`SpeciesPayload`, `StatRow`, `LevelUpMove`, `EvoNode`, `DexEntry`) — these
+- **Type definitions** (`SpeciesPayload`, `StatRow`, `Move`, `EvoNode`, `EncounterGame`, `DexEntry`) — these
   are copied into `web/src/types.ts` so both halves agree on the shape
 - **Derived-value functions** — `statRange()`, `eggSteps()`,
   `baseFriendship()`, `genderSplit()`, `catchPct()`, `typeDefenses()`,
   `evolutionChain()`
-- **Sprite resolution** — `GEN_SPRITE_DIRS` and `spritesFor()`
+- **Sprite resolution** — `GEN_SPRITE_DIRS`, `GEN_ANIMATED_DIR`,
+  `SHINY_FROM_GEN` and `spritesFor()`
 - **Prepared statements** — compiled once at module load, reused per request
 - **Public functions** — `getSpecies()`, `search()`, `listByGen()`
 
@@ -187,7 +195,9 @@ Contains:
   helper functions near the top
 - Add a new endpoint's data → new prepared statement plus a new exported
   function
-- Change which sprite set a generation uses → `GEN_SPRITE_DIRS`
+- Change which sprite set a generation uses → `GEN_SPRITE_DIRS` (static),
+  `GEN_ANIMATED_DIR` (GIFs, tried first), `SHINY_FROM_GEN` (shinies are
+  hidden below it; currently 3, though Gold/Silver introduced them in gen 2)
 
 **Why prepared statements matter:** SQLite compiles a query plan once and
 reuses it. Building SQL strings per request would reparse every time and
@@ -204,12 +214,23 @@ Deliberately thin, about twenty lines. Four routes:
 | `GET /api/species/:id?gen=N` | Full payload for one form. `gen` is optional (default: latest available); an unavailable gen resolves to the nearest one and `payload.gen` reports what was served |
 | `GET /api/search?q=&gen=N` | Name search within a generation (the UI filters the cached dex list client-side instead) |
 | `GET /api/list/:gen` | Every form in a generation |
+| `GET /api/schema` | Tables and columns, for the SQL page sidebar |
+| `POST /api/query` `{sql}` | Runs one read-only statement, up to 500 rows. See the SQL page note |
 | `GET /sprites/*` | Static sprite files |
 
 Binds to `0.0.0.0`, so other machines on the LAN can reach it.
 
 **Edit this file when you want to:** add a route, add caching headers, or
 serve the built frontend for production.
+
+**The SQL page** (`/sql`) sends user-typed SQL to `POST /api/query`. Three
+layers keep that safe: the database connection is opened `readonly`, so
+nothing can write; `runQuery()` refuses multiple statements and anything
+whose prepared statement isn't flagged read-only (so `PRAGMA`, `ATTACH` and
+DDL are rejected before execution); and results are capped at 500 rows.
+There is no query timeout — better-sqlite3 doesn't expose one — so a
+pathological recursive CTE can hold the process busy. Acceptable for a
+LAN tool; don't expose the port to the internet.
 
 ### `web/src/App.tsx` — routing
 
@@ -243,6 +264,15 @@ None of these fetch or hold state. They take props and render.
   panel is one line here. `Panel` is the section wrapper with the heading.
 - **`StatBars.tsx`** — the `shade()` function sets bar colour by value band.
   Bars are scaled against 255 so they're comparable between species.
+- **`PixelSprite.tsx`** — every game sprite on the page goes through this.
+  It reads the image's natural size on load and draws it at the largest
+  whole-number scale (in *device* pixels) that fits its box, so
+  `image-rendering: pixelated` never produces uneven pixels. See the
+  sprite-size gotcha.
+- **`Tooltip.tsx`** — wraps move and ability names. Opens on hover, focus
+  or tap, closes on Escape, outside tap or scroll; rendered through a portal
+  with fixed positioning so the move tables' `overflow-x: auto` can't clip
+  it, and flips above the trigger near the bottom of the viewport.
 - **`TypePill.tsx`** — reads `var(--t-<type>)` from `index.css`.
 - **`MovesPanel.tsx`** — one tab per learn method present in the payload,
   with a count. The machine tab is labelled TM/HM, TM/TR or TM by generation.
@@ -262,7 +292,7 @@ colours.
 
 ## 5. Database schema
 
-Twelve tables. The design principle is that **generation is a first-class
+Thirteen tables. The design principle is that **generation is a first-class
 column**, so switching generations is a `WHERE` clause rather than
 application logic.
 
@@ -290,7 +320,9 @@ reads. A species present in six generations has six rows; a species with
 alternate forms has more.
 
 Holds `type1`, `type2`, the six base stats, `bst`, three ability slots,
-`heightm`, `weightkg`, `species_id` linking back to the invariant data, and
+`heightm`, `weightkg`, `species_id` linking back to the invariant data,
+`sprite_id` (the PokeAPI/sprites file stem — the dex number, or veekun's
+form id such as 10009 for Rotom-Wash, so forms get their own art), and
 the evolution fields describing how this form evolves *from* its
 pre-evolution: `prevo` (a showdown_id), `evo_level`, `evo_type`, `evo_item`,
 `evo_move`, `evo_condition`, `evo_region`. These come from Showdown rather
@@ -333,6 +365,13 @@ Earthquake is TM26 through gen 7, TR10 in gen 8, TM149 in gen 9.
 
 Move stats per generation, since moves are rebalanced between games.
 `accuracy = 0` means "never misses" (stored as 0, rendered as ∞).
+`short_desc` and `desc` are Showdown's one-line and full effect text, also
+per generation (Bite: "10% chance to flinch" in gen 1, 30% from gen 2).
+
+### `ability_gen` — 1,364 rows
+
+Every ability that exists in each generation (gen 3 onward), with the same
+two description fields. Looked up by name when assembling a species page.
 
 ### `type_chart` — 2,677 rows
 
@@ -368,8 +407,10 @@ weather and story-progress conditions are kept.
 
 ### Indexes
 
-Seven, all on the lookup paths the API actually uses. Built after bulk
-insert rather than before, which is significantly faster.
+Eleven, all on the lookup paths the API actually uses — `pokemon_gen` by
+gen, species, number and prevo; `learnset` by form and level; `move_gen`,
+`flavor_text`, `species_name` and `encounter` by their join keys. Built
+after bulk insert rather than before, which is significantly faster.
 
 ---
 
@@ -448,7 +489,9 @@ handled.
 | **Duplicate learnset rows** | 677 `S` rows (one per event, `9S0`/`9S1`, index dropped) and 2 genuine `L` duplicates from Showdown | `DISTINCT` in the learnset query |
 | **Egg moves live on the basic stage** | Showdown lists `E` sources on Gligar, not Gliscor | Inherited down the prevo chain at query time; `eggMovesVia` names the source |
 | **Dataset ends at 1,025** | Scarlet/Violet base is covered; nothing newer | Known limit |
-| **Sprite coverage is patchy** | Not every generation has art for every species | `spritesFor()` walks a fallback chain |
+| **Sprite coverage is patchy** | Not every generation has art for every species or form | `spritesFor()` walks a fallback chain: animated → this gen's static folder → default set, first by form id then by dex number |
+| **Sprite canvases differ per set** | Gen I/II are 40×40, III 64, IV 80, V 96, USUM 128, BDSP 256; GIFs are tight-cropped (37–146px, non-square) | Never drawn into a fixed `<img>` size. `PixelSprite` scales by whole device pixels and bottom-aligns; on a 1× display some generations sit smaller than others — that's the price of crisp pixels |
+| **Animated sprites are era-bound** | Black/White GIFs are authentic for gen 5; Showdown's GIFs come from the gen 6+ models | Gen 5 uses BW, gens 6–9 use Showdown, gens 1–4 stay static |
 
 ---
 
@@ -464,6 +507,8 @@ npm run build:db
 npm run dev:api                    # pane 1 — backend on :3000
 cd web; npm run dev                # pane 2 — frontend on :5173
 ```
+Stop `dev:api` before `build:db` — the ETL replaces the file the server has
+open.
 Open `http://localhost:5173`. Vite proxies `/api` and `/sprites` to the
 backend, so there's no CORS to configure.
 
@@ -477,10 +522,12 @@ npx tsx scratch/show.ts clefairy 5
 ```fish
 sqlitebrowser data/pokedex.sqlite
 ```
+or open the `/sql` page in the app. `SQL_GUIDE.md` teaches SQL against this
+schema, with runnable examples and exercises.
 
 **Add a row to an info panel**
 
-Edit the relevant `DataTable` array in `App.tsx`:
+Edit the relevant `DataTable` array in `pages/SpeciesPage.tsx`:
 ```tsx
 ['Base Exp.', <span className="tabular-nums">{d.training.baseExp}</span>],
 ```
@@ -533,7 +580,7 @@ There is no migration tooling because there is no state worth migrating.
 | Database | SQLite via `better-sqlite3` | Zero-config, embeddable, synchronous API suits build-time work |
 | Game data | `@pkmn/dex`, `@pkmn/data` | Only source with per-generation accuracy |
 | Reference data | veekun / PokéAPI CSVs | Encyclopaedic depth |
-| Sprites | `PokeAPI/sprites` | Per-generation art |
+| Sprites | `PokeAPI/sprites` | Per-generation art, shinies, BW and Showdown GIFs |
 | API | Hono | Minimal, portable, runs unchanged inside Tauri |
 | Frontend | React 19 + Vite | Component reuse across dense repeated tables |
 | Styling | Tailwind v4 | Utility classes suit dense tabular layouts |

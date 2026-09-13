@@ -44,6 +44,8 @@ export interface Move {
   pp: number | null;
   level: number | null;      // method 'L' only
   machine: string | null;    // method 'M' only, e.g. 'TM26', 'HM03', 'TR10'
+  shortDesc: string | null;  // one line, per generation
+  desc: string | null;       // full rules text
 }
 
 /** One member of an evolution family, as it exists in one generation. */
@@ -68,7 +70,7 @@ export interface SpeciesPayload {
   forme: string | null;
   availableGens: number[];
   types: string[];
-  abilities: { slot: string; name: string }[];
+  abilities: { slot: string; name: string; shortDesc: string | null; desc: string | null }[];
   dimensions: { heightM: number | null; weightKg: number | null };
   stats: StatRow[];
   bst: number;
@@ -206,9 +208,10 @@ function catchPct(rate: number | null): number | null {
 // ------------------------------------------------------------ sprite paths
 
 /**
- * Sprites are keyed by national dex number. Coverage is patchy — a species
- * can't appear in a generation that predates it, and some gen folders are
- * incomplete — so walk a fallback chain and return the first that exists.
+ * Static sprite folders per generation, keyed by national dex number or
+ * veekun form id. Coverage is patchy — a species can't appear in a
+ * generation that predates it, and some folders are incomplete — so every
+ * lookup walks a fallback chain and returns the first file that exists.
  */
 const GEN_SPRITE_DIRS: Record<number, string[]> = {
   1: ['versions/generation-i/red-blue'],
@@ -222,6 +225,19 @@ const GEN_SPRITE_DIRS: Record<number, string[]> = {
   9: ['versions/generation-ix/scarlet-violet'],
 };
 
+/**
+ * Animated sprites take priority where the animation is era-appropriate:
+ * Black/White's own GIFs for gen 5, and Showdown's (drawn from the gen 6+
+ * 3D models) from gen 6 on. Earlier generations stay static.
+ */
+const GEN_ANIMATED_DIR: Record<number, string> = {
+  5: 'versions/generation-v/black-white/animated',
+  6: 'other/showdown', 7: 'other/showdown', 8: 'other/showdown', 9: 'other/showdown',
+};
+
+/** Shinies are shown from this generation on. (They exist from gen 2; set to 2 to include Gold/Silver/Crystal.) */
+const SHINY_FROM_GEN = 3;
+
 function firstExisting(candidates: string[]): string | null {
   for (const rel of candidates) {
     if (fs.existsSync(path.join(SPRITE_ROOT, rel))) return rel;
@@ -229,16 +245,31 @@ function firstExisting(candidates: string[]): string | null {
   return null;
 }
 
-function spritesFor(num: number | null, gen: number) {
-  if (num == null) return { front: null, shiny: null, artwork: null };
+/**
+ * Front, shiny and artwork paths for one form in one generation. `spriteId`
+ * is the form's file stem (10009 for Rotom-Wash); `num` is the species'
+ * dex number, tried second so a form without its own art still shows
+ * something.
+ */
+function spritesFor(spriteId: number | null, num: number | null, gen: number) {
+  if (spriteId == null && num == null) return { front: null, shiny: null, artwork: null };
 
+  const ids = [...new Set([spriteId, num].filter((n): n is number => n != null))];
+  const anim = GEN_ANIMATED_DIR[gen];
   const dirs = GEN_SPRITE_DIRS[gen] ?? [];
-  // gen-specific art first, then the modern default set as a safety net
-  const front = firstExisting([...dirs.map(d => `${d}/${num}.png`), `${num}.png`]);
-  const shiny = firstExisting([...dirs.map(d => `${d}/shiny/${num}.png`), `shiny/${num}.png`]);
-  const artwork = firstExisting([`other/official-artwork/${num}.png`, `other/home/${num}.png`]);
 
-  return { front, shiny, artwork };
+  // per id: animated, then this generation's static art, then the modern default set
+  const chain = (sub: string, ext = 'png') => ids.flatMap(id => [
+    ...(anim ? [`${anim}${sub}/${id}.gif`] : []),
+    ...dirs.map(d => `${d}${sub}/${id}.${ext}`),
+    `${sub ? sub.slice(1) + '/' : ''}${id}.${ext}`,
+  ]);
+
+  return {
+    front: firstExisting(chain('')),
+    shiny: gen >= SHINY_FROM_GEN ? firstExisting(chain('/shiny')) : null,
+    artwork: firstExisting(ids.flatMap(id => [`other/official-artwork/${id}.png`, `other/home/${id}.png`])),
+  };
 }
 
 // ------------------------------------------------------------- statements
@@ -270,10 +301,13 @@ const qFlavor = db.prepare(`
   ORDER BY rowid
 `);
 
-const EVO_COLS = `showdown_id, name, base_species, num, type1, type2, prevo,
+const EVO_COLS = `showdown_id, name, base_species, num, sprite_id, type1, type2, prevo,
   evo_level, evo_type, evo_item, evo_move, evo_condition, evo_region`;
 const qEvoRow = db.prepare(`SELECT ${EVO_COLS} FROM pokemon_gen WHERE showdown_id = ? AND gen = ?`);
 const qEvosOf = db.prepare(`SELECT ${EVO_COLS} FROM pokemon_gen WHERE prevo = ? AND gen = ? ORDER BY num, rowid`);
+
+const qAbility = db.prepare(
+  `SELECT short_desc, desc FROM ability_gen WHERE name = ? AND gen = ?`);
 
 const qForms = db.prepare(
   `SELECT showdown_id, name, forme FROM pokemon_gen WHERE num = ? AND gen = ?
@@ -283,7 +317,7 @@ const qForms = db.prepare(
 // event index, leaving identical rows.
 const qLearnset = db.prepare(`
   SELECT DISTINCT l.method, l.level, l.move_id, l.move_name,
-         m.type, m.category, m.power, m.accuracy, m.pp,
+         m.type, m.category, m.power, m.accuracy, m.pp, m.short_desc, m.desc,
          mg.label AS machine
   FROM learnset l
   LEFT JOIN move_gen m ON m.move_id = l.move_id AND m.gen = l.gen
@@ -413,7 +447,7 @@ function evolutionChain(id: string, gen: number): EvoNode {
     name: r.name,
     num: r.num,
     types: [r.type1, r.type2].filter(Boolean),
-    sprite: spritesFor(r.num, gen).front,
+    sprite: spritesFor(r.sprite_id, r.num, gen).front,
     method: depth === 0 ? null : evoMethod(r),
     evos: depth < 8 ? (qEvosOf.all(r.showdown_id, gen) as any[]).map(c => build(c, depth + 1)) : [],
   });
@@ -435,6 +469,8 @@ function learnset(id: string, gen: number): Partial<Record<MoveMethod, Move[]>> 
       pp: m.pp,
       level: m.level,
       machine: m.machine,
+      shortDesc: m.short_desc,
+      desc: m.desc,
     });
   }
   // level-up by level, machines by number, everything else alphabetically
@@ -552,7 +588,10 @@ export function getSpecies(rawId: string, wantedGen?: number): SpeciesPayload | 
     { slot: '0', name: row.ability0 },
     { slot: '1', name: row.ability1 },
     { slot: 'H', name: row.abilityH },
-  ].filter(a => a.name) as { slot: string; name: string }[];
+  ].filter(a => a.name).map(a => {
+    const text = qAbility.get(a.name, gen) as any;
+    return { ...a, shortDesc: text?.short_desc ?? null, desc: text?.desc ?? null };
+  });
 
   const gender = genderSplit(row.gender_rate);
   const eggs   = withInheritedEggMoves(id, gen, learnset(id, gen));
@@ -600,7 +639,7 @@ export function getSpecies(rawId: string, wantedGen?: number): SpeciesPayload | 
       : [],
     names,
     flavorText: row.species_id != null ? (qFlavor.all(row.species_id) as any[]) : [],
-    sprites: spritesFor(row.num, gen),
+    sprites: spritesFor(row.sprite_id, row.num, gen),
     typeDefenses: typeDefenses([row.type1, row.type2].filter(Boolean), gen),
     moves: eggs.moves,
     eggMovesVia: eggs.via,
@@ -636,9 +675,62 @@ export function listAll(): DexEntry[] {
     latestGen: r.gen,
     stats: { hp: r.hp, atk: r.atk, def: r.def, spa: r.spa, spd: r.spd, spe: r.spe },
     bst: r.bst,
-    sprite: firstExisting([`${r.num}.png`]),
+    sprite: firstExisting([`${r.num}.png`]),   // static thumbnail; the table is 1,025 rows
   }));
   return dexCache;
+}
+
+// -------------------------------------------------------------- SQL page
+
+export interface SchemaTable { name: string; columns: { name: string; type: string }[] }
+
+let schemaCache: SchemaTable[] | null = null;
+
+/** Tables and columns, for the SQL page's sidebar. */
+export function schema(): SchemaTable[] {
+  if (schemaCache) return schemaCache;
+  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as { name: string }[];
+  schemaCache = tables.map(t => ({
+    name: t.name,
+    columns: (db.prepare(`PRAGMA table_info("${t.name}")`).all() as any[]).map(c => ({ name: c.name, type: c.type })),
+  }));
+  return schemaCache;
+}
+
+export const QUERY_ROW_LIMIT = 500;
+
+export interface QueryResult {
+  columns: string[];
+  rows: unknown[][];
+  truncated: boolean;
+  ms: number;
+}
+
+/**
+ * Run one user-supplied read-only statement. The connection itself is
+ * read-only, so this is belt and braces: reject anything that isn't a
+ * single SELECT-shaped statement before it gets near the file.
+ */
+export function runQuery(sql: string): QueryResult {
+  const text = sql.trim().replace(/;\s*$/, '');
+  if (!text) throw new Error('Empty query.');
+  if (/;/.test(text.replace(/'[^']*'/g, ''))) throw new Error('One statement at a time.');
+
+  let stmt;
+  try { stmt = db.prepare(text); }
+  catch (e: any) { throw new Error(e.message); }
+  if (!stmt.readonly) throw new Error('Only read-only queries are allowed.');
+  if (!stmt.reader) throw new Error('That statement returns no rows.');
+
+  const t0 = performance.now();
+  const columns = stmt.columns().map(c => c.name);
+  const rows: unknown[][] = [];
+  let truncated = false;
+  for (const row of stmt.raw().iterate()) {
+    if (rows.length >= QUERY_ROW_LIMIT) { truncated = true; break; }
+    rows.push(row as unknown[]);
+  }
+  return { columns, rows, truncated, ms: Math.round((performance.now() - t0) * 10) / 10 };
 }
 
 export function close() {

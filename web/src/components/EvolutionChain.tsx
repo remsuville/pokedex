@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import type { EvoNode } from '../types';
 import { spriteUrl } from '../lib/api';
 import { TypePill } from './TypePill';
+import { PixelSprite } from './PixelSprite';
 
 interface Props { root: EvoNode; currentId: string; gen: number }
 
@@ -49,9 +50,7 @@ function Card({ node, current, gen }: { node: EvoNode; current: boolean; gen: nu
         current ? 'border-accent bg-page' : 'border-hair'
       }`}
     >
-      {img
-        ? <img src={img} alt="" width={96} height={96} className="h-24 w-24" style={{ imageRendering: 'pixelated' }} />
-        : <span className="h-24 w-24" />}
+      {img ? <PixelSprite src={img} alt="" box={112} /> : <span className="h-28 w-28" />}
       <span className="text-xs text-muted tabular-nums">#{String(node.num ?? 0).padStart(4, '0')}</span>
       <span className="text-sm font-semibold leading-tight">{node.name}</span>
       <span className="mt-0.5 flex flex-wrap justify-center gap-1">

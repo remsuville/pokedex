@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import type { SpeciesPayload } from '../types';
+import type { DexEntry, SpeciesPayload } from '../types';
 import { fetchSpecies, spriteUrl, titleCase, ROMAN } from '../lib/api';
 import { useDex, fold } from '../lib/dex';
 import { TypePill } from '../components/TypePill';
@@ -8,6 +8,8 @@ import { DataTable, Panel } from '../components/DataTable';
 import { StatBars } from '../components/StatBars';
 import { MovesPanel } from '../components/MovesPanel';
 import { EncounterPanel } from '../components/EncounterPanel';
+import { PixelSprite } from '../components/PixelSprite';
+import { Tooltip } from '../components/Tooltip';
 import { TypeDefenses } from '../components/TypeDefenses';
 import { EvolutionChain } from '../components/EvolutionChain';
 
@@ -43,8 +45,11 @@ export function SpeciesPage() {
   // Tabs reflect what the API actually served: asking for gen 9 on a species
   // absent from Scarlet/Violet falls back to its nearest generation.
   const gen = d.gen;
+  // hero is the official artwork; the gen sprite pair sits beneath it
   const usingArtwork = Boolean(d.sprites.artwork);
   const art = spriteUrl(d.sprites.artwork) ?? spriteUrl(d.sprites.front);
+  const front = d.sprites.artwork ? spriteUrl(d.sprites.front) : null;
+  const shiny = spriteUrl(d.sprites.shiny);
   const flavor = d.flavorText[d.flavorText.length - 1];
 
   const idx = dex && d.num != null ? dex.findIndex(e => e.num === d.num) : -1;
@@ -53,9 +58,9 @@ export function SpeciesPage() {
 
   return (
     <>
-      <nav className="mb-4 flex justify-between text-sm text-muted" aria-label="Adjacent Pokémon">
-        <span>{prev && <Link to={link(prev.id, gen)} className="hover:text-accent">← #{String(prev.num).padStart(4, '0')} {prev.name}</Link>}</span>
-        <span>{next && <Link to={link(next.id, gen)} className="hover:text-accent">#{String(next.num).padStart(4, '0')} {next.name} →</Link>}</span>
+      <nav className="mb-4 flex items-center justify-between gap-4 text-sm text-muted" aria-label="Adjacent Pokémon">
+        {prev ? <AdjacentLink entry={prev} gen={gen} dir="prev" /> : <span />}
+        {next ? <AdjacentLink entry={next} gen={gen} dir="next" /> : <span />}
       </nav>
 
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-hair pb-5">
@@ -108,6 +113,15 @@ export function SpeciesPage() {
             <img src={art} alt={d.name} width={280} height={280}
                  className="mx-auto w-full max-w-[280px]" style={{ imageRendering: usingArtwork ? 'auto' : 'pixelated' }} />
           )}
+          {front && (
+            <figure className="mt-4 rounded-md border border-hair bg-panel p-3">
+              <div className="flex justify-around">
+                <Sprite src={front} alt={`${d.name}, Gen ${ROMAN[gen]} sprite`} label="Normal" />
+                {shiny && <Sprite src={shiny} alt={`${d.name}, shiny`} label="Shiny" />}
+              </div>
+              <figcaption className="mt-2 text-center text-xs text-muted">Gen {ROMAN[gen]} sprite{shiny ? 's' : ''}</figcaption>
+            </figure>
+          )}
           {flavor && (
             <p className="mt-3 text-sm leading-relaxed text-muted">
               {flavor.text}
@@ -127,7 +141,8 @@ export function SpeciesPage() {
               ['Abilities', <ol className="space-y-0.5">
                 {d.abilities.map(a => (
                   <li key={a.slot}>
-                    {a.name}{a.slot === 'H' && <span className="ml-1 text-xs text-muted">(hidden)</span>}
+                    <Tooltip summary={a.shortDesc} detail={a.desc}>{a.name}</Tooltip>
+                    {a.slot === 'H' && <span className="ml-1 text-xs text-muted">(hidden)</span>}
                   </li>
                 ))}
               </ol>],
@@ -184,5 +199,35 @@ export function SpeciesPage() {
         </div>
       </div>
     </>
+  );
+}
+
+function Sprite({ src, alt, label }: { src: string; alt: string; label: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <PixelSprite src={src} alt={alt} box={128} />
+      <span className="text-xs text-muted">{label}</span>
+    </div>
+  );
+}
+
+/** Previous / next by national number, with the default sprite as a thumbnail. */
+function AdjacentLink({ entry, gen, dir }: { entry: DexEntry; gen: number; dir: 'prev' | 'next' }) {
+  const img = spriteUrl(entry.sprite);
+  return (
+    <Link
+      to={link(entry.id, gen)}
+      className={`group flex items-center gap-1.5 hover:text-accent ${dir === 'next' ? 'flex-row-reverse text-right' : ''}`}
+    >
+      <span aria-hidden>{dir === 'prev' ? '←' : '→'}</span>
+      {img && (
+        <img src={img} alt="" width={48} height={48} loading="lazy"
+             className="h-12 w-12 opacity-80 transition-opacity group-hover:opacity-100" />
+      )}
+      <span>
+        <span className="block text-xs tabular-nums">#{String(entry.num).padStart(4, '0')}</span>
+        <span className="block font-medium text-ink group-hover:text-accent">{entry.name}</span>
+      </span>
+    </Link>
   );
 }

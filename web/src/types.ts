@@ -21,6 +21,8 @@ export interface Move {
   pp: number | null;
   level: number | null;      // method 'L' only
   machine: string | null;    // method 'M' only, e.g. 'TM26', 'HM03', 'TR10'
+  shortDesc: string | null;  // one line, per generation
+  desc: string | null;       // full rules text
 }
 
 /** One member of an evolution family, as it exists in one generation. */
@@ -45,7 +47,7 @@ export interface SpeciesPayload {
   forme: string | null;
   availableGens: number[];
   types: string[];
-  abilities: { slot: string; name: string }[];
+  abilities: { slot: string; name: string; shortDesc: string | null; desc: string | null }[];
   dimensions: { heightM: number | null; weightKg: number | null };
   stats: StatRow[];
   bst: number;

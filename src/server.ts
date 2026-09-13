@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { getSpecies, search, listByGen, listAll } from './db/queries.js';
+import { getSpecies, search, listByGen, listAll, schema, runQuery } from './db/queries.js';
 
 const app = new Hono();
 
@@ -28,6 +28,21 @@ app.get('/api/search', (c) => {
 });
 
 app.get('/api/list/:gen', (c) => c.json(listByGen(Number(c.req.param('gen')))));
+
+// The SQL page. The database connection is read-only and runQuery() rejects
+// anything but a single SELECT-shaped statement.
+app.get('/api/schema', (c) => c.json(schema()));
+
+app.post('/api/query', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const sql = typeof body?.sql === 'string' ? body.sql : '';
+  if (sql.length > 10_000) return c.json({ error: 'Query too long.' }, 400);
+  try {
+    return c.json(runQuery(sql));
+  } catch (e: any) {
+    return c.json({ error: e.message }, 400);
+  }
+});
 
 app.use('/sprites/*', serveStatic({
   root: './vendor/sprites/sprites/pokemon',
