@@ -31,8 +31,10 @@ export interface StatRow {
   max: number;   // level 100, 31 IV, 252 EV, beneficial nature
 }
 
-export interface LevelUpMove {
-  level: number;
+/** Showdown's learnset source codes. */
+export type MoveMethod = 'L' | 'M' | 'T' | 'E' | 'S' | 'D' | 'V' | 'R';
+
+export interface Move {
   moveId: string;
   name: string;
   type: string | null;
@@ -40,6 +42,20 @@ export interface LevelUpMove {
   power: number | null;
   accuracy: number | null;   // null = never misses
   pp: number | null;
+  level: number | null;      // method 'L' only
+  machine: string | null;    // method 'M' only, e.g. 'TM26', 'HM03', 'TR10'
+}
+
+/** One member of an evolution family, as it exists in one generation. */
+export interface EvoNode {
+  id: string;
+  name: string;
+  num: number | null;
+  types: string[];
+  sprite: string | null;
+  /** How this form evolves from its parent, e.g. "Level 36", "Use Leaf Stone in Alola". Null on the root. */
+  method: string | null;
+  evos: EvoNode[];
 }
 
 export interface SpeciesPayload {
@@ -73,11 +89,52 @@ export interface SpeciesPayload {
     eggStepsMin: number | null;
     eggStepsMax: number | null;
   };
-  evolution: { prevo: string | null; evoLevel: number | null; evos: string[] };
+  /** The whole family tree in this generation, rooted at the earliest stage. A lone node means no evolution. */
+  evolution: EvoNode;
+  /** Every form of this species present in this generation, including this one. */
+  forms: { id: string; name: string; forme: string | null }[];
   names: Record<string, string>;
   flavorText: { version: string; text: string }[];
   sprites: { front: string | null; shiny: string | null; artwork: string | null };
-  levelUpMoves: LevelUpMove[];
+  /** Damage taken from each attacking type in this generation's chart, types only (no abilities). */
+  typeDefenses: { type: string; multiplier: number }[];
+  /** Learnset for this generation, grouped by method. Absent methods are absent keys. */
+  moves: Partial<Record<MoveMethod, Move[]>>;
+  /** Egg moves are inherited from the basic stage; this names it when it isn't this form. */
+  eggMovesVia: string | null;
+  /** Where to find it, per game of this generation. Empty for gens veekun doesn't cover (9). */
+  encounters: EncounterGame[];
+  /** Set when a form has no encounter data of its own and the species' default form is shown. */
+  encountersVia: string | null;
+}
+
+export interface EncounterRow {
+  region: string | null;
+  location: string;
+  area: string | null;        // sub-area, only when the location has several
+  method: string;             // veekun identifier: walk, surf, old-rod, gift...
+  minLevel: number | null;
+  maxLevel: number | null;
+  chance: number | null;      // summed slot rarity, roughly a percentage
+  conditions: string | null;  // 'Morning / Night', 'Emerald in slot 2'; null = always
+}
+
+export interface EncounterGame {
+  version: string;            // 'Ultra Sun'
+  rows: EncounterRow[];
+}
+
+/** One row of the national dex list — a species' base form at its latest generation. */
+export interface DexEntry {
+  id: string;
+  name: string;
+  num: number;
+  types: string[];
+  genIntroduced: number | null;
+  latestGen: number;
+  stats: Record<StatKey, number>;
+  bst: number;
+  sprite: string | null;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -213,17 +270,73 @@ const qFlavor = db.prepare(`
   ORDER BY rowid
 `);
 
-const qEvos = db.prepare(
-  `SELECT DISTINCT showdown_id FROM pokemon_gen WHERE prevo = ? AND gen = ?`);
+const EVO_COLS = `showdown_id, name, base_species, num, type1, type2, prevo,
+  evo_level, evo_type, evo_item, evo_move, evo_condition, evo_region`;
+const qEvoRow = db.prepare(`SELECT ${EVO_COLS} FROM pokemon_gen WHERE showdown_id = ? AND gen = ?`);
+const qEvosOf = db.prepare(`SELECT ${EVO_COLS} FROM pokemon_gen WHERE prevo = ? AND gen = ? ORDER BY num, rowid`);
 
-const qLevelUp = db.prepare(`
-  SELECT l.level, l.move_id, l.move_name,
-         m.type, m.category, m.power, m.accuracy, m.pp
+const qForms = db.prepare(
+  `SELECT showdown_id, name, forme FROM pokemon_gen WHERE num = ? AND gen = ?
+   ORDER BY (forme IS NOT NULL AND forme != ''), rowid`);
+
+// DISTINCT: Showdown records one 'S' source per event and the ETL drops the
+// event index, leaving identical rows.
+const qLearnset = db.prepare(`
+  SELECT DISTINCT l.method, l.level, l.move_id, l.move_name,
+         m.type, m.category, m.power, m.accuracy, m.pp,
+         mg.label AS machine
   FROM learnset l
   LEFT JOIN move_gen m ON m.move_id = l.move_id AND m.gen = l.gen
-  WHERE l.showdown_id = ? AND l.gen = ? AND l.method = 'L'
-  ORDER BY l.level, l.move_name
+  LEFT JOIN machine_gen mg ON mg.move_id = l.move_id AND mg.gen = l.gen
+  WHERE l.showdown_id = ? AND l.gen = ?
 `);
+
+const qTypeChart = db.prepare(
+  `SELECT attacking, defending, multiplier FROM type_chart WHERE gen = ? ORDER BY rowid`);
+
+/** Canonical display order, as pokemondb lists them. Types absent from a gen are skipped. */
+const TYPE_ORDER = [
+  'Normal', 'Fire', 'Water', 'Electric', 'Grass', 'Ice', 'Fighting', 'Poison', 'Ground',
+  'Flying', 'Psychic', 'Bug', 'Rock', 'Ghost', 'Dragon', 'Dark', 'Steel', 'Fairy',
+];
+
+// attacking -> defending -> multiplier, one chart per gen, built on first use
+const chartCache = new Map<number, Map<string, Map<string, number>>>();
+
+function typeChart(gen: number) {
+  let chart = chartCache.get(gen);
+  if (!chart) {
+    chart = new Map();
+    for (const r of qTypeChart.all(gen) as any[]) {
+      if (!chart.has(r.attacking)) chart.set(r.attacking, new Map());
+      chart.get(r.attacking)!.set(r.defending, r.multiplier);
+    }
+    chartCache.set(gen, chart);
+  }
+  return chart;
+}
+
+/** Multiply each attacking type's effectiveness across the defender's types. */
+function typeDefenses(types: string[], gen: number) {
+  const chart = typeChart(gen);
+  return TYPE_ORDER
+    .filter(t => chart.has(t))
+    .map(t => ({
+      type: t,
+      multiplier: types.reduce((m, def) => m * (chart.get(t)!.get(def) ?? 1), 1),
+    }));
+}
+
+const ENC_COLS = `version, version_order, region, location, area, method,
+  min_level, max_level, chance, conditions`;
+const qEncByForm = db.prepare(
+  `SELECT ${ENC_COLS} FROM encounter WHERE form_id = ? AND gen = ?
+   ORDER BY version_order, region, location, area, method, rowid`);
+const qEncBySpecies = db.prepare(
+  `SELECT ${ENC_COLS} FROM encounter WHERE species_id = ? AND gen = ? AND is_default = 1
+   ORDER BY version_order, region, location, area, method, rowid`);
+const qDefaultFormName = db.prepare(
+  `SELECT name FROM pokemon_gen WHERE num = ? AND gen = ? AND (forme IS NULL OR forme = '') LIMIT 1`);
 
 const qSearch = db.prepare(`
   SELECT showdown_id, name, num, type1, type2
@@ -238,10 +351,192 @@ const qListByGen = db.prepare(`
   FROM pokemon_gen WHERE gen = ? ORDER BY num, name
 `);
 
+// Showdown's gen mods are game-scoped (gen 9 = Scarlet/Violet), so 292
+// species have no gen-9 row. The national dex therefore takes each species'
+// base form from the latest generation it appears in.
+const qDex = db.prepare(`
+  SELECT p.showdown_id, p.name, p.num, p.type1, p.type2, p.gen,
+         p.hp, p.atk, p.def, p.spa, p.spd, p.spe, p.bst,
+         s.gen_introduced
+  FROM pokemon_gen p
+  LEFT JOIN species s ON s.species_id = p.species_id
+  WHERE (p.forme IS NULL OR p.forme = '')
+    AND p.gen = (SELECT MAX(gen) FROM pokemon_gen WHERE showdown_id = p.showdown_id)
+  ORDER BY p.num
+`);
+
+// ---------------------------------------------------------- evolution
+
+/** Turn Showdown's evolution fields into one readable phrase. */
+function evoMethod(r: any): string {
+  const parts: string[] = [];
+  switch (r.evo_type) {
+    case 'useItem':         parts.push(`Use ${r.evo_item}`); break;
+    case 'trade':           parts.push(r.evo_item ? `Trade holding ${r.evo_item}` : 'Trade'); break;
+    case 'levelHold':       parts.push(`Level up holding ${r.evo_item}`); break;
+    case 'levelMove':       parts.push(`Level up knowing ${r.evo_move}`); break;
+    case 'levelFriendship': parts.push('Level up with high friendship'); break;
+    case 'other':           return r.evo_condition ?? 'Special';
+    // levelExtra and plain level-ups; Showdown sometimes carries a stale
+    // evo_item on levelExtra rows (gen 4 Magnezone), so the item is ignored
+    default:                parts.push(r.evo_level ? `Level ${r.evo_level}` : 'Level up');
+  }
+  if (r.evo_condition) parts.push(r.evo_condition);
+  if (r.evo_region) parts.push(`in ${r.evo_region}`);
+  return parts.join(' ');
+}
+
+/**
+ * The family tree containing `id`, as it exists in `gen`: climb prevo links
+ * to the root, then expand every branch. Cosmetic forms (Pikachu-Hoenn,
+ * Vivillon patterns) carry no evolution data of their own, so an isolated
+ * form borrows its base species' tree.
+ */
+function evolutionChain(id: string, gen: number): EvoNode {
+  let root = qEvoRow.get(id, gen) as any;
+
+  const isolated = !root.prevo && !(qEvosOf.get(root.showdown_id, gen));
+  if (isolated && root.base_species && toID(root.base_species) !== root.showdown_id) {
+    root = qEvoRow.get(toID(root.base_species), gen) ?? root;
+  }
+
+  const seen = new Set<string>([root.showdown_id]);
+  while (root.prevo) {
+    const parent = qEvoRow.get(root.prevo, gen) as any;
+    if (!parent || seen.has(parent.showdown_id)) break;
+    seen.add(parent.showdown_id);
+    root = parent;
+  }
+
+  const build = (r: any, depth: number): EvoNode => ({
+    id: r.showdown_id,
+    name: r.name,
+    num: r.num,
+    types: [r.type1, r.type2].filter(Boolean),
+    sprite: spritesFor(r.num, gen).front,
+    method: depth === 0 ? null : evoMethod(r),
+    evos: depth < 8 ? (qEvosOf.all(r.showdown_id, gen) as any[]).map(c => build(c, depth + 1)) : [],
+  });
+  return build(root, 0);
+}
+
+// ------------------------------------------------------------ learnset
+
+function learnset(id: string, gen: number): Partial<Record<MoveMethod, Move[]>> {
+  const out: Partial<Record<MoveMethod, Move[]>> = {};
+  for (const m of qLearnset.all(id, gen) as any[]) {
+    (out[m.method as MoveMethod] ??= []).push({
+      moveId: m.move_id,
+      name: m.move_name,
+      type: m.type,
+      category: m.category,
+      power: m.power || null,
+      accuracy: m.accuracy === 0 ? null : m.accuracy,
+      pp: m.pp,
+      level: m.level,
+      machine: m.machine,
+    });
+  }
+  // level-up by level, machines by number, everything else alphabetically
+  const byName = (a: Move, b: Move) => a.name.localeCompare(b.name);
+  for (const [method, list] of Object.entries(out) as [MoveMethod, Move[]][]) {
+    if (method === 'L')      list.sort((a, b) => (a.level! - b.level!) || byName(a, b));
+    else if (method === 'M') list.sort((a, b) => (a.machine ?? '~').localeCompare(b.machine ?? '~') || byName(a, b));
+    else                     list.sort(byName);
+  }
+  return out;
+}
+
+/**
+ * Showdown lists egg moves on the basic stage only (Gligar, not Gliscor),
+ * since an evolution hatches as its prevo. Walk the prevo chain and borrow
+ * the first egg list found, naming where it came from.
+ */
+function withInheritedEggMoves(id: string, gen: number, moves: Partial<Record<MoveMethod, Move[]>>) {
+  if (moves.E) return { moves, via: null };
+  const seen = new Set([id]);
+  let row = qEvoRow.get(id, gen) as any;
+  while (row?.prevo && !seen.has(row.prevo)) {
+    seen.add(row.prevo);
+    row = qEvoRow.get(row.prevo, gen) as any;
+    if (!row) break;
+    const eggs = learnset(row.showdown_id, gen).E;
+    if (eggs) return { moves: { ...moves, E: eggs }, via: row.name as string };
+  }
+  return { moves, via: null };
+}
+
+// ----------------------------------------------------------- encounters
+
+/**
+ * Group the stored rows by game, merging condition variants of the same
+ * spot: "Morning" and "Night" become "Morning / Night"; a spot that is also
+ * reachable unconditionally, or under more than four variants, is simply
+ * shown without conditions.
+ */
+function groupEncounters(rows: any[]): EncounterGame[] {
+  const games = new Map<string, Map<string, EncounterRow & { variants: Set<string | null> }>>();
+  for (const r of rows) {
+    const spots = games.get(r.version) ?? new Map();
+    games.set(r.version, spots);
+    const key = `${r.location}|${r.area}|${r.method}`;
+    const spot = spots.get(key);
+    if (spot) {
+      spot.minLevel = Math.min(spot.minLevel!, r.min_level);
+      spot.maxLevel = Math.max(spot.maxLevel!, r.max_level);
+      spot.chance = Math.max(spot.chance!, r.chance);
+      spot.variants.add(r.conditions);
+    } else {
+      spots.set(key, {
+        region: r.region, location: r.location, area: r.area, method: r.method,
+        minLevel: r.min_level, maxLevel: r.max_level, chance: r.chance,
+        conditions: null, variants: new Set([r.conditions]),
+      });
+    }
+  }
+  return [...games].map(([version, spots]) => ({
+    version,
+    rows: [...spots.values()].map(({ variants, ...row }) => ({
+      ...row,
+      conditions: variants.has(null) || variants.size > 4 ? null : [...variants].join(' / '),
+    })),
+  }));
+}
+
+function encountersFor(row: any, gen: number): { encounters: EncounterGame[]; via: string | null } {
+  let rows = qEncByForm.all(row.showdown_id, gen) as any[];
+  if (rows.length || row.species_id == null) return { encounters: groupEncounters(rows), via: null };
+
+  // cosmetic and battle-only forms have no entries of their own
+  rows = qEncBySpecies.all(row.species_id, gen) as any[];
+  if (!rows.length) return { encounters: [], via: null };
+  const dflt = qDefaultFormName.get(row.num, gen) as any;
+  const via = dflt && dflt.name !== row.name ? dflt.name : null;
+  return { encounters: groupEncounters(rows), via };
+}
+
 // ------------------------------------------------------------ public API
 
+/**
+ * Pick the generation to show. Prefer what was asked for; failing that the
+ * nearest earlier generation, then the earliest later one. Lets links carry a
+ * gen across species that don't share it (gen-9 Bulbasaur -> Caterpie, absent
+ * from Scarlet/Violet) without 404ing.
+ */
+function resolveGen(available: number[], wanted?: number): number | null {
+  if (!available.length) return null;
+  if (wanted == null) return available[available.length - 1];
+  if (available.includes(wanted)) return wanted;
+  const earlier = available.filter(g => g < wanted);
+  return earlier.length ? earlier[earlier.length - 1] : available[0];
+}
+
 /** Assemble everything a species page needs, for one generation. */
-export function getSpecies(id: string, gen: number): SpeciesPayload | null {
+export function getSpecies(rawId: string, wantedGen?: number): SpeciesPayload | null {
+  const id = toID(rawId);
+  const availableGens = getAvailableGens(id);
+  const gen = resolveGen(availableGens, wantedGen);
+  if (gen == null) return null;
   const row = qPokemon.get(id, gen) as any;
   if (!row) return null;
 
@@ -260,6 +555,8 @@ export function getSpecies(id: string, gen: number): SpeciesPayload | null {
   ].filter(a => a.name) as { slot: string; name: string }[];
 
   const gender = genderSplit(row.gender_rate);
+  const eggs   = withInheritedEggMoves(id, gen, learnset(id, gen));
+  const enc    = encountersFor(row, gen);
   const steps  = eggSteps(row.hatch_counter, gen);
 
   const names: Record<string, string> = {};
@@ -275,7 +572,7 @@ export function getSpecies(id: string, gen: number): SpeciesPayload | null {
     genus: row.genus,
     baseSpecies: row.base_species,
     forme: row.forme,
-    availableGens: (qAvailableGens.all(id) as any[]).map(r => r.gen),
+    availableGens,
     types: [row.type1, row.type2].filter(Boolean),
     abilities,
     dimensions: { heightM: row.heightm, weightKg: row.weightkg },
@@ -297,24 +594,18 @@ export function getSpecies(id: string, gen: number): SpeciesPayload | null {
       eggStepsMin: steps.min,
       eggStepsMax: steps.max,
     },
-    evolution: {
-      prevo: row.prevo ? toID(row.prevo) : null,
-      evoLevel: row.evo_level,
-      evos: (qEvos.all(row.showdown_id, gen) as any[]).map(r => r.showdown_id),
-    },
+    evolution: evolutionChain(id, gen),
+    forms: row.num != null
+      ? (qForms.all(row.num, gen) as any[]).map(f => ({ id: f.showdown_id, name: f.name, forme: f.forme || null }))
+      : [],
     names,
     flavorText: row.species_id != null ? (qFlavor.all(row.species_id) as any[]) : [],
     sprites: spritesFor(row.num, gen),
-    levelUpMoves: (qLevelUp.all(id, gen) as any[]).map(m => ({
-      level: m.level,
-      moveId: m.move_id,
-      name: m.move_name,
-      type: m.type,
-      category: m.category,
-      power: m.power || null,
-      accuracy: m.accuracy === 0 ? null : m.accuracy,
-      pp: m.pp,
-    })),
+    typeDefenses: typeDefenses([row.type1, row.type2].filter(Boolean), gen),
+    moves: eggs.moves,
+    eggMovesVia: eggs.via,
+    encounters: enc.encounters,
+    encountersVia: enc.via,
   };
 }
 
@@ -329,6 +620,25 @@ export function search(query: string, gen: number, limit = 20) {
 
 export function listByGen(gen: number) {
   return qListByGen.all(gen);
+}
+
+let dexCache: DexEntry[] | null = null;
+
+/** The full national dex, 1,025 rows. Static for the life of the process, so built once. */
+export function listAll(): DexEntry[] {
+  if (dexCache) return dexCache;
+  dexCache = (qDex.all() as any[]).map(r => ({
+    id: r.showdown_id,
+    name: r.name,
+    num: r.num,
+    types: [r.type1, r.type2].filter(Boolean),
+    genIntroduced: r.gen_introduced,
+    latestGen: r.gen,
+    stats: { hp: r.hp, atk: r.atk, def: r.def, spa: r.spa, spd: r.spd, spe: r.spe },
+    bst: r.bst,
+    sprite: firstExisting([`${r.num}.png`]),
+  }));
+  return dexCache;
 }
 
 export function close() {

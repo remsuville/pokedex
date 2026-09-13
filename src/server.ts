@@ -1,13 +1,22 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { getSpecies, search, listByGen } from './db/queries.js';
+import { getSpecies, search, listByGen, listAll } from './db/queries.js';
 
 const app = new Hono();
 
+// Static for the life of the process; let the browser keep it.
+app.get('/api/species', (c) => {
+  c.header('Cache-Control', 'public, max-age=3600');
+  return c.json(listAll());
+});
+
+// gen is optional: omitted -> the latest generation this form appears in;
+// unavailable -> the nearest one (payload.gen reports what was used).
 app.get('/api/species/:id', (c) => {
-  const gen = Number(c.req.query('gen') ?? 9);
-  if (!Number.isInteger(gen) || gen < 1 || gen > 9) return c.json({ error: 'bad gen' }, 400);
+  const raw = c.req.query('gen');
+  const gen = raw == null ? undefined : Number(raw);
+  if (gen !== undefined && (!Number.isInteger(gen) || gen < 1 || gen > 9)) return c.json({ error: 'bad gen' }, 400);
   const data = getSpecies(c.req.param('id'), gen);
   return data ? c.json(data) : c.json({ error: 'not found' }, 404);
 });

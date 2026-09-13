@@ -1,14 +1,14 @@
 What's left, in the order I'd do it
 
-1. Routing and search — reach all 1,025 instead of just Gliscor. This is the biggest jump in usefulness and everything after it is easier to test once you can navigate.
-2. Evolution chain — needs an ETL change. You store prevo and evo_level but not the method (stone, trade, friendship), so the veekun pokemon_evolution.csv has to come in.
-3. Type effectiveness table — the weakness grid from your Serebii screenshot. Gen-accurate, since the chart changed in gens 2 and 6.
-4. Encounter locations — encounters.csv, self-contained, no dependencies on anything else.
-5. Remaining move methods — TM, tutor, egg as tabs alongside level-up.
+1. ~~Routing and search~~ — done. `/` is the national dex, `/pokemon/:id?gen=N` the species page, header search everywhere, prev/next, form and evolution links.
+2. ~~Evolution chain~~ — done, from Showdown's form-aware evo fields rather than veekun's CSV. Full family tree per gen on the species page.
+3. ~~Type effectiveness table~~ — done. `type_chart` table in the ETL, `typeDefenses` in the payload, grid on the species page.
+4. ~~Encounter locations~~ — done for gens 1–8 (veekun has no BDSP/PLA/SV data). Per-game tabs on the species page.
+5. ~~Remaining move methods~~ — done. Tabs per method with TM/HM/TR numbers from veekun's machines.csv; egg moves inherited from the basic stage.
 6. Competitive sets — the pkmn.cc layer.
 7. Tauri packaging — the .exe for your friend.
 
-Steps 2 and 3 need the ETL touched; the rest are additive.
+Both remaining steps are additive.
 
 My recommendation is routing and search next. Right now you can't check whether Clefairy's Fairy switch renders properly, or whether a Pokémon with three evolutions breaks the layout — you're flying blind on everything except one species. Search fixes that and makes the rest quicker to build.
 

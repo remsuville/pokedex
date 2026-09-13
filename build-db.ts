@@ -61,6 +61,22 @@ const csvSpeciesNames   = readCSV('pokemon_species_names.csv');
 const csvFlavor         = readCSV('pokemon_species_flavor_text.csv');
 const csvLanguages      = readCSV('languages.csv');
 const csvVersions       = readCSV('versions.csv');
+const csvMachines       = readCSV('machines.csv');
+const csvItems          = readCSV('items.csv');
+const csvMoves          = readCSV('moves.csv');
+const csvVersionGroups  = readCSV('version_groups.csv');
+const csvVersionNames   = readCSV('version_names.csv');
+const csvEncounters     = readCSV('encounters.csv');
+const csvEncSlots       = readCSV('encounter_slots.csv');
+const csvEncMethods     = readCSV('encounter_methods.csv');
+const csvEncCondMap     = readCSV('encounter_condition_value_map.csv');
+const csvEncCondValues  = readCSV('encounter_condition_values.csv');
+const csvEncCondProse   = readCSV('encounter_condition_value_prose.csv');
+const csvLocations      = readCSV('locations.csv');
+const csvLocationNames  = readCSV('location_names.csv');
+const csvLocationAreas  = readCSV('location_areas.csv');
+const csvAreaProse      = readCSV('location_area_prose.csv');
+const csvRegions        = readCSV('regions.csv');
 
 const statById      = index(csvStatNames, r => r.id);
 const growthById    = index(csvGrowthRates, r => r.id);
@@ -71,6 +87,8 @@ const eggGroupName  = index(
   r => r.egg_group_id,
 );
 
+const itemById      = index(csvItems, r => r.id);
+const moveById      = index(csvMoves, r => r.id);
 const pokemonByID   = index(csvPokemon, r => toID(r.identifier));
 const speciesByID   = index(csvSpecies, r => toID(r.identifier));
 const speciesByNum  = index(csvSpecies, r => r.id);
@@ -106,7 +124,8 @@ function resolveSpeciesId(sp: { id: string; name: string; baseSpecies?: string }
 // ---------------------------------------------------------------- schema
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
-if (fs.existsSync(OUT)) fs.unlinkSync(OUT);
+// WAL sidecars left by a still-running reader would corrupt the fresh file
+for (const f of [OUT, OUT + '-wal', OUT + '-shm']) if (fs.existsSync(f)) fs.unlinkSync(f);
 
 const db = new Database(OUT);
 db.pragma('journal_mode = WAL');
@@ -175,8 +194,14 @@ CREATE TABLE pokemon_gen (
   abilityH     TEXT,
   heightm      REAL,
   weightkg     REAL,
-  prevo        TEXT,
-  evo_level    INTEGER,
+  -- how this form evolves FROM its prevo (Showdown's fields, form- and gen-aware)
+  prevo         TEXT,           -- showdown_id of the pre-evolution
+  evo_level     INTEGER,
+  evo_type      TEXT,           -- levelFriendship useItem trade levelHold levelMove levelExtra other; NULL = plain level
+  evo_item      TEXT,
+  evo_move      TEXT,
+  evo_condition TEXT,           -- free text, e.g. "at night"
+  evo_region    TEXT,           -- only evolves here, e.g. "Alola"
   PRIMARY KEY (showdown_id, gen)
 );
 
@@ -187,6 +212,43 @@ CREATE TABLE learnset (
   move_name   TEXT,
   method      TEXT NOT NULL,   -- L=level-up M=TM/HM T=tutor E=egg S=event D=dream V=virtual-console
   level       INTEGER          -- only meaningful for method 'L'
+);
+
+-- damage multiplier of an attacking type against a single defending type,
+-- per generation (the chart changed in gens 2 and 6)
+CREATE TABLE type_chart (
+  gen        INTEGER NOT NULL,
+  attacking  TEXT NOT NULL,
+  defending  TEXT NOT NULL,
+  multiplier REAL NOT NULL,
+  PRIMARY KEY (gen, attacking, defending)
+);
+
+-- TM/HM/TR number of a move in a generation, e.g. 'TM26', 'HM03', 'TR75'
+CREATE TABLE machine_gen (
+  gen     INTEGER NOT NULL,
+  move_id TEXT NOT NULL,
+  label   TEXT NOT NULL,
+  PRIMARY KEY (gen, move_id)
+);
+
+-- where a form can be found: one row per (game, area, method, conditions),
+-- aggregated from veekun's per-slot encounter rows at build time
+CREATE TABLE encounter (
+  form_id       TEXT NOT NULL,     -- showdown_id of the form encountered
+  species_id    INTEGER NOT NULL,
+  is_default    INTEGER NOT NULL,  -- 1 if this is the species' default form
+  gen           INTEGER NOT NULL,
+  version       TEXT NOT NULL,     -- 'Ultra Sun'
+  version_order INTEGER NOT NULL,
+  region        TEXT,
+  location      TEXT NOT NULL,     -- 'Victory Road'
+  area          TEXT,              -- 'Victory Road (2F)'; NULL when it adds nothing
+  method        TEXT NOT NULL,     -- veekun identifier: walk, surf, old-rod, gift...
+  min_level     INTEGER,
+  max_level     INTEGER,
+  chance        INTEGER,           -- summed slot rarity, roughly a percentage
+  conditions    TEXT               -- 'Morning', 'During a swarm; Night'...
 );
 
 CREATE TABLE move_gen (
@@ -266,6 +328,146 @@ db.transaction(() => {
   }
 })();
 
+// ---------------------------------------------------------------- machines
+
+console.log('Writing machines...');
+
+/**
+ * veekun keys machines by version group. One list per generation, most
+ * authoritative game first: a move listed in several groups keeps its
+ * number from the first. Side games (Colosseum, Let's Go, BDSP, Legends)
+ * are left out.
+ */
+const MACHINE_GROUPS: Record<number, string[]> = {
+  1: ['2', '1'],          // Yellow, Red/Blue
+  2: ['4', '3'],          // Crystal, Gold/Silver
+  3: ['6', '5', '7'],     // Emerald, Ruby/Sapphire, FireRed/LeafGreen
+  4: ['10', '9', '8'],    // HGSS, Platinum, Diamond/Pearl
+  5: ['14', '11'],        // B2W2, Black/White
+  6: ['16', '15'],        // ORAS, X/Y
+  7: ['18', '17'],        // USUM, Sun/Moon
+  8: ['20'],              // Sword/Shield (TMs + TRs)
+  9: ['27', '26', '25'],  // Indigo Disk, Teal Mask, Scarlet/Violet
+};
+
+const insMachine = db.prepare('INSERT OR IGNORE INTO machine_gen VALUES (?,?,?)');
+const machinesByGroup = group(csvMachines, r => r.version_group_id);
+
+db.transaction(() => {
+  for (const g of GENS) {
+    for (const vg of MACHINE_GROUPS[g]) {
+      for (const m of machinesByGroup.get(vg) ?? []) {
+        const move = moveById.get(m.move_id);
+        const item = itemById.get(m.item_id);
+        if (!move || !item) continue;
+        // 'tm26' -> 'TM26'; Scarlet/Violet number to three digits ('TM001')
+        let label = item.identifier.toUpperCase();
+        if (g === 9) label = label.replace(/^TM(\d+)$/, (_, n) => `TM${n.padStart(3, '0')}`);
+        insMachine.run(g, toID(move.identifier), label);
+      }
+    }
+  }
+})();
+
+// -------------------------------------------------------------- encounters
+
+console.log('Writing encounters...');
+
+{
+  const en = (rows: Record<string, string>[]) => rows.filter(r => r.local_language_id === '9');
+  const vgById       = index(csvVersionGroups, r => r.id);
+  const versionById2 = index(csvVersions, r => r.id);
+  const versionName  = index(en(csvVersionNames), r => r.version_id);
+  const slotById     = index(csvEncSlots, r => r.id);
+  const methodById   = index(csvEncMethods, r => r.id);
+  const condValue    = index(csvEncCondValues, r => r.id);
+  const condName     = index(en(csvEncCondProse), r => r.encounter_condition_value_id);
+  const condsByEnc   = group(csvEncCondMap, r => r.encounter_id);
+  const locationById = index(csvLocations, r => r.id);
+  const locationName = index(en(csvLocationNames), r => r.location_id);
+  const areaById     = index(csvLocationAreas, r => r.id);
+  const areaName     = index(en(csvAreaProse), r => r.location_area_id);
+  const regionById   = index(csvRegions, r => r.id);
+  const pokemonById  = index(csvPokemon, r => r.id);
+
+  // Japanese-only Red/Green/Blue would duplicate the international games
+  const SKIP_GROUPS = new Set(['28', '29']);
+  // Max Raid den tier/rarity conditions multiply every den entry by ten
+  // without saying anything about where the Pokémon is
+  const SKIP_CONDITIONS = new Set(['27', '28']);   // max-den-rarity, max-den-rating
+
+  // "Victory Road (2F)" is only worth showing when the location has several areas
+  const areasPerLocation = new Map<string, number>();
+  for (const a of csvLocationAreas) areasPerLocation.set(a.location_id, (areasPerLocation.get(a.location_id) ?? 0) + 1);
+
+  interface Agg {
+    form_id: string; species_id: number; is_default: number; gen: number;
+    version: string; version_order: number; region: string | null;
+    location: string; area: string | null; method: string;
+    min_level: number; max_level: number; chance: number; conditions: string | null;
+  }
+  const agg = new Map<string, Agg>();
+
+  for (const e of csvEncounters) {
+    const version = versionById2.get(e.version_id);
+    const vg = version && vgById.get(version.version_group_id);
+    if (!vg || SKIP_GROUPS.has(vg.id)) continue;
+    const slot = slotById.get(e.encounter_slot_id);
+    const area = areaById.get(e.location_area_id);
+    const loc  = area && locationById.get(area.location_id);
+    const pk   = pokemonById.get(e.pokemon_id);
+    if (!slot || !area || !loc || !pk) continue;
+
+    const species = speciesByNum.get(pk.species_id)!;
+    const isDefault = pk.is_default === '1';
+    // default forms key by species (deoxys-normal -> deoxys), others by form (rattata-alola)
+    const formId = toID(isDefault ? species.identifier : pk.identifier);
+
+    // only non-default conditions carry information ("During a swarm", not "Not during a swarm")
+    const conds = (condsByEnc.get(e.id) ?? [])
+      .map(c => condValue.get(c.encounter_condition_value_id))
+      .filter(c => c && c.is_default !== '1' && !SKIP_CONDITIONS.has(c.encounter_condition_id))
+      .map(c => condName.get(c!.id)?.name ?? c!.identifier)
+      .sort();
+    const conditions = conds.length ? conds.join('; ') : null;
+
+    const location = locationName.get(loc.id)?.name ?? loc.identifier;
+    const areaLabel = (areasPerLocation.get(loc.id) ?? 0) > 1 ? areaName.get(area.id)?.name ?? null : null;
+    const method = methodById.get(slot.encounter_method_id)?.identifier ?? slot.encounter_method_id;
+
+    const key = [e.version_id, area.id, method, conditions ?? '', formId].join('|');
+    const row = agg.get(key);
+    if (row) {
+      row.min_level = Math.min(row.min_level, Number(e.min_level));
+      row.max_level = Math.max(row.max_level, Number(e.max_level));
+      row.chance += Number(slot.rarity) || 0;
+    } else {
+      agg.set(key, {
+        form_id: formId,
+        species_id: Number(pk.species_id),
+        is_default: isDefault ? 1 : 0,
+        gen: Number(vg.generation_id),
+        version: versionName.get(version.id)?.name ?? version.identifier,
+        version_order: Number(version.id),
+        region: regionById.get(loc.region_id)?.identifier ?? null,
+        location,
+        area: areaLabel && areaLabel !== location ? areaLabel : null,
+        method,
+        min_level: Number(e.min_level),
+        max_level: Number(e.max_level),
+        chance: Number(slot.rarity) || 0,
+        conditions,
+      });
+    }
+  }
+
+  const insEnc = db.prepare(`INSERT INTO encounter VALUES
+    (@form_id,@species_id,@is_default,@gen,@version,@version_order,@region,
+     @location,@area,@method,@min_level,@max_level,@chance,@conditions)`);
+  db.transaction(() => { for (const r of agg.values()) insEnc.run(r); })();
+  console.log(`  ${csvEncounters.length} slot rows -> ${agg.size} encounter rows`);
+}
+
 // ------------------------------------------------ per-generation pokemon
 
 console.log('Writing per-generation pokemon, learnsets and moves...');
@@ -275,10 +477,15 @@ const gens = new Generations(Dex);
 const insPoke = db.prepare(`INSERT OR REPLACE INTO pokemon_gen VALUES
   (@showdown_id,@gen,@species_id,@name,@base_species,@forme,@num,@type1,@type2,
    @hp,@atk,@def,@spa,@spd,@spe,@bst,@ability0,@ability1,@abilityH,
-   @heightm,@weightkg,@prevo,@evo_level)`);
+   @heightm,@weightkg,@prevo,@evo_level,@evo_type,@evo_item,@evo_move,@evo_condition,@evo_region)`);
 const insLearn = db.prepare('INSERT INTO learnset VALUES (?,?,?,?,?,?)');
 const insMove  = db.prepare(`INSERT OR REPLACE INTO move_gen VALUES
   (@move_id,@gen,@name,@type,@category,@power,@accuracy,@pp,@priority)`);
+const insType  = db.prepare('INSERT INTO type_chart VALUES (?,?,?,?)');
+
+// Types a Pokémon can actually have. '???' is Curse's type in gens 2-4 and
+// Stellar is Tera-only; neither belongs on a defensive chart.
+const isRealType = (name: string) => name !== '???' && name !== 'Stellar';
 
 let unresolved = 0;
 
@@ -304,6 +511,11 @@ for (const g of GENS) {
   }
 
   db.transaction(() => {
+    const types = [...gen.types].filter(t => isRealType(t.name));
+    for (const atk of types) {
+      for (const def of types) insType.run(g, atk.name, def.name, atk.effectiveness[def.name]);
+    }
+
     for (const move of gen.moves) {
       insMove.run({
         move_id: move.id,
@@ -347,8 +559,13 @@ for (const g of GENS) {
         // decimetres / hectograms on the form row, so fall back to that.
         heightm: sp.heightm ?? (vk?.height ? Number(vk.height) / 10 : null),
         weightkg: sp.weightkg ?? (vk?.weight ? Number(vk.weight) / 10 : null),
-        prevo: sp.prevo ?? null,
-        evo_level: (sp as any).evoLevel ?? null,
+        prevo: sp.prevo ? toID(sp.prevo) : null,
+        evo_level: sp.evoLevel ?? null,
+        evo_type: sp.evoType ?? null,
+        evo_item: sp.evoItem ?? null,
+        evo_move: sp.evoMove ?? null,
+        evo_condition: sp.evoCondition ?? null,
+        evo_region: sp.evoRegion ?? null,
       });
     }
 
@@ -367,8 +584,12 @@ db.exec(`
 CREATE INDEX idx_poke_gen        ON pokemon_gen(gen);
 CREATE INDEX idx_poke_species    ON pokemon_gen(species_id, gen);
 CREATE INDEX idx_poke_num        ON pokemon_gen(num, gen);
+CREATE INDEX idx_poke_prevo      ON pokemon_gen(prevo, gen);
 CREATE INDEX idx_learn_lookup    ON learnset(showdown_id, gen, method);
 CREATE INDEX idx_learn_level     ON learnset(showdown_id, gen, level);
+CREATE INDEX idx_move_gen        ON move_gen(gen, move_id);
+CREATE INDEX idx_enc_form        ON encounter(form_id, gen);
+CREATE INDEX idx_enc_species     ON encounter(species_id, gen);
 CREATE INDEX idx_flavor_species  ON flavor_text(species_id, language);
 CREATE INDEX idx_name_species    ON species_name(species_id, language);
 `);
