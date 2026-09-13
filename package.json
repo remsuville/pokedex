@@ -5,15 +5,22 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "check": "tsx scratch/gen-check.ts"
+    "check": "tsx scratch/gen-check.ts",
+    "build:db": "tsx build-db.ts",
+    "dev:api": "tsx watch src/server.ts"
   },
   "keywords": [],
   "type": "module",
   "dependencies": {
+    "@hono/node-server": "^2.1.1",
     "@pkmn/data": "^0.10.11",
-    "@pkmn/dex": "^0.10.11"
+    "@pkmn/dex": "^0.10.11",
+    "better-sqlite3": "^13.0.3",
+    "csv-parse": "^7.0.2",
+    "hono": "^4.13.7"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.20.2",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
