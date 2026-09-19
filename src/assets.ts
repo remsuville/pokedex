@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { Writable } from 'node:stream';
+import { Transform, Writable } from 'node:stream';
 import extract from 'extract-zip';
 
 export interface Pack {
@@ -59,7 +59,7 @@ export class AssetManager {
       received: 0,
       error: null,
     }));
-    for (const p of this.packs) if (p.state === 'missing') p.received = this.partialSize(p);
+    for (const p of this.packs) p.received = p.state === 'ready' ? p.size : this.partialSize(p);
   }
 
   status(): AssetStatus {
@@ -113,12 +113,13 @@ export class AssetManager {
       const append = res.status === 206;
       if (!append) have = 0;
       p.received = have;
-      const out = fs.createWriteStream(part, { flags: append ? 'a' : 'w' });
+      // the file stream is part of the pipeline so a write error (disk full,
+      // locked file) rejects here and hits the retry loop instead of crashing the process
       await pipeline(
         res.body as any,
-        new Writable({ write: (chunk, _enc, cb) => { p.received += chunk.length; out.write(chunk, cb); } }),
+        new Transform({ transform: (chunk, _enc, cb) => { p.received += chunk.length; cb(null, chunk); } }),
+        fs.createWriteStream(part, { flags: append ? 'a' : 'w' }),
       );
-      await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => err ? reject(err) : resolve()));
     }
 
     p.state = 'verifying';

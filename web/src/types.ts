@@ -245,6 +245,7 @@ export interface PackStatus {
   name: string;
   file: string;
   size: number;
+  sha256: string;
   required: boolean;
   description: string;
   state: PackState;

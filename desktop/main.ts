@@ -14,8 +14,11 @@
 import { app, BrowserWindow, Menu, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: the latter keeps a leading slash before a
+// Windows drive letter (/C:/...) and percent-encodes spaces
+const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../../..');       // build/desktop -> desktop -> repo
 
 /** Files that ship with the app, read-only. */
@@ -89,7 +92,8 @@ async function main() {
     minWidth: 720,
     minHeight: 480,
     title: 'Pokédex',
-    icon: path.join(here, '../../resources/icon.png'),
+    // resources/ isn't shipped; the packaged app uses the icon embedded in the executable
+    ...(app.isPackaged ? {} : { icon: path.join(here, '../../resources/icon.png') }),
     backgroundColor: '#f7f8fa',
     autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, sandbox: true },

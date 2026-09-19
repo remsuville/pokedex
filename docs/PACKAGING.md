@@ -203,6 +203,13 @@ server above.
   first, or the Electron binary isn't downloaded (`node node_modules/electron/install.js` fixes it after the fact).
 - **`NODE_MODULE_VERSION` mismatch** at startup means `better-sqlite3` was
   built for the wrong ABI: `cd desktop; npx electron-builder install-app-deps`.
+- **`import.meta.url` to a path.** Use `fileURLToPath()` from `node:url`,
+  never `new URL(import.meta.url).pathname`: on Windows the latter gives
+  `/C:/Users/...` (leading slash, colon), and on every platform it
+  percent-encodes spaces. `main.ts` had the bug; it only survived on
+  Windows because the packaged build never uses those paths for anything
+  that matters, but `npm start` in `desktop/` on Windows would have failed
+  to find the database.
 - **Cross-building** the Windows installer from Linux needs Wine; use the
   workflow or a Windows machine instead. `pack:linux` works anywhere for testing.
 - **Tag and version drift.** The tag name is free text; the `.exe` is named
