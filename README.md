@@ -2,8 +2,7 @@
 
 An offline Pokédex for all nine generations, with generation-accurate stats,
 typings, abilities, learnsets, evolutions, encounter locations, and a Movedex,
-Abilitydex and Itemdex to match. Switch a species to Gen 1 and you get Gen 1's
-numbers, not today's.
+Abilitydex and Itemdex.
 
 It runs as a Windows desktop app or as a LAN web app from source. Both are
 the same code: a SQLite database built once from two datasets, a small Hono
@@ -57,10 +56,6 @@ cd web && npm install && npm run dev      # UI on http://localhost:5173
 
 Open <http://localhost:5173>. The API binds to all interfaces so other
 machines on the LAN can use it — don't expose it to the internet.
-
-To try the desktop shell without building an installer: `cd web && npm run
-build`, then `cd desktop && npm install && npm start`. Building the installer
-itself is done by CI on a tag push; see [PACKAGING.md](docs/PACKAGING.md).
 
 ## Documentation
 
