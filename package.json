@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "check": "tsx scratch/gen-check.ts",
     "build:db": "tsx build-db.ts",
-    "dev:api": "tsx watch src/server.ts"
+    "dev:api": "tsx watch src/server.ts",
+    "pack:sprites": "tsx scripts/pack-sprites.ts"
   },
   "keywords": [],
   "type": "module",
@@ -21,8 +22,10 @@
     "hono": "^4.13.7"
   },
   "devDependencies": {
+    "@types/archiver": "^8.0.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.20.2",
+    "archiver": "^8.0.0",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   }
