@@ -8,6 +8,7 @@ import {
   getSpecies, search, listByGen, listAll, schema, runQuery,
   listMoves, getMove, listAbilities, getAbility, listItems, getItem,
 } from './db/queries.js';
+export { resetSpriteCaches } from './db/queries.js';
 import type { AssetManager } from './assets.js';
 
 export interface ServerOptions {
@@ -31,11 +32,19 @@ const DEFAULTS = {
 export function createApp(opts: ServerOptions): Hono {
   const app = new Hono();
 
-  // Static for the life of the process; let the browser keep it.
-  app.get('/api/species', (c) => {
-    c.header('Cache-Control', 'public, max-age=3600');
-    return c.json(listAll());
-  });
+  // The lists are static for the life of the process, so the browser may
+  // keep them — except while sprites are still arriving, when the paths in
+  // them are incomplete.
+  const cacheable = () => !opts.assets || opts.assets.status().ready;
+  const list = (build: () => unknown) => (c: any) => {
+    if (cacheable()) c.header('Cache-Control', 'public, max-age=3600');
+    else c.header('Cache-Control', 'no-store');
+    return c.json(build());
+  };
+  app.get('/api/species', list(listAll));
+  app.get('/api/moves', list(listMoves));
+  app.get('/api/abilities', list(listAbilities));
+  app.get('/api/items', list(listItems));
 
   // gen is optional: omitted -> the latest generation this form appears in;
   // unavailable -> the nearest one (payload.gen reports what was used).
@@ -48,10 +57,6 @@ export function createApp(opts: ServerOptions): Hono {
 
   // The other three dexes follow the same shape: a cached list, and a detail
   // endpoint that takes an optional gen and reports which one it served.
-  app.get('/api/moves', (c) => { c.header('Cache-Control', 'public, max-age=3600'); return c.json(listMoves()); });
-  app.get('/api/abilities', (c) => { c.header('Cache-Control', 'public, max-age=3600'); return c.json(listAbilities()); });
-  app.get('/api/items', (c) => { c.header('Cache-Control', 'public, max-age=3600'); return c.json(listItems()); });
-
   for (const [route, get] of [
     ['/api/moves/:id', getMove],
     ['/api/abilities/:id', getAbility],

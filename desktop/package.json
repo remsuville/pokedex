@@ -1,7 +1,7 @@
 {
   "name": "pokedex-desktop",
   "version": "0.2.0",
-  "description": "Pokédex desktop shell — the web app plus its API in one window",
+  "description": "Pok\u00e9dex desktop shell \u2014 the web app plus its API in one window",
   "private": true,
   "type": "module",
   "main": "build/desktop/main.js",
@@ -24,5 +24,7 @@
     "electron": "^42.0.0",
     "electron-builder": "^26.0.0",
     "typescript": "^7.0.2"
-  }
+  },
+  "productName": "Pokedex",
+  "author": "remsuville"
 }

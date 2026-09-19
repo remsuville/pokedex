@@ -20,10 +20,14 @@ export function AssetGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let gated = false;
     const poll = async () => {
       try {
         const s = await fetchAssetStatus();
         if (!live) return;
+        // lists fetched while the gate was up have no sprite paths; start clean
+        if (s.managed && !s.ready) gated = true;
+        else if (gated) { location.reload(); return; }
         setStatus(s);
         // fast while the gate is up, slower for the background pack, stop when done
         if (s.managed && (s.busy || !s.ready)) timer = setTimeout(poll, s.ready ? 2000 : 400);

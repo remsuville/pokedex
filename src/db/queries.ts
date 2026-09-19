@@ -1143,6 +1143,17 @@ export function runQuery(sql: string): QueryResult {
   return { columns, rows, truncated, ms: Math.round((performance.now() - t0) * 10) / 10 };
 }
 
+/**
+ * Sprite paths are resolved by checking the disk and cached. The desktop app
+ * calls this when a sprite pack finishes downloading, so lists built before
+ * the files existed pick them up.
+ */
+export function resetSpriteCaches() {
+  thumbCache.clear();
+  dexCache = null;
+  itemDexCache = null;
+}
+
 export function close() {
   db.close();
 }

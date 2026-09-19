@@ -64,13 +64,13 @@ async function main() {
   process.env.POKEDEX_DB = paths.db;
   process.env.SPRITE_ROOT = paths.sprites;
   process.env.ITEM_SPRITE_ROOT = bundled.itemSprites;
-  const { start } = await import('../src/server.js');
+  const { start, resetSpriteCaches } = await import('../src/server.js');
   const { AssetManager, readManifest } = await import('../src/assets.js');
 
   // POKEDEX_PACK_URL overrides where packs come from — used to test against a local server
   const manifest = readManifest(bundled.manifest);
   if (process.env.POKEDEX_PACK_URL) manifest.baseUrl = process.env.POKEDEX_PACK_URL;
-  const assets = new AssetManager(manifest, paths.sprites);
+  const assets = new AssetManager(manifest, paths.sprites, resetSpriteCaches);
   assets.start();
 
   const { port } = await start({

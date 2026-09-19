@@ -51,7 +51,7 @@ export class AssetManager {
   private packs: PackStatus[];
   private running = false;
 
-  constructor(private manifest: Manifest, private dest: string) {
+  constructor(private manifest: Manifest, private dest: string, private onPackReady?: () => void) {
     fs.mkdirSync(dest, { recursive: true });
     this.packs = manifest.packs.map(p => ({
       ...p,
@@ -135,6 +135,7 @@ export class AssetManager {
     fs.unlinkSync(part);
     fs.writeFileSync(this.marker(p), new Date().toISOString());
     p.state = 'ready';
+    this.onPackReady?.();
   }
 }
 
