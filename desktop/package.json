@@ -1,0 +1,28 @@
+{
+  "name": "pokedex-desktop",
+  "version": "0.2.0",
+  "description": "Pokédex desktop shell — the web app plus its API in one window",
+  "private": true,
+  "type": "module",
+  "main": "build/desktop/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && electron .",
+    "pack:linux": "npm run build && electron-builder --linux dir",
+    "pack:win": "npm run build && electron-builder --win",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "better-sqlite3": "12.11.1",
+    "extract-zip": "^2.0.1",
+    "hono": "^4.13.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.2",
+    "electron": "^42.0.0",
+    "electron-builder": "^26.0.0",
+    "typescript": "^7.0.2"
+  }
+}

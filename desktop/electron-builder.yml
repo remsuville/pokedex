@@ -1,0 +1,29 @@
+appId: dev.remsuville.pokedex
+productName: Pokedex
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - build/**/*
+  - package.json
+# Data that ships with the installer. Pokémon sprites are NOT here — they're
+# downloaded on first run from the packs listed in manifest.json.
+extraResources:
+  - from: ../data/pokedex.sqlite
+    to: data/pokedex.sqlite
+  - from: ../vendor/sprites/sprites/items
+    to: item-sprites
+  - from: ../web/dist
+    to: web
+  - from: ../build/packs/manifest.json
+    to: manifest.json
+win:
+  target: nsis
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: Pokedex-Setup-${version}.${ext}
+linux:
+  target: dir
+  icon: resources/icon.png
