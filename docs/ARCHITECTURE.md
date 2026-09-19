@@ -85,8 +85,12 @@ The ETL's job is to reconcile the two.
 ├── build-db.ts             ETL — builds the database. Run when data changes.
 ├── package.json            Backend dependencies and scripts
 ├── tsconfig.json
-├── next_steps.md           Roadmap
-├── SQL_GUIDE.md            Learning guide: SQL from scratch on this database, how each script uses it
+├── docs/
+│   ├── ARCHITECTURE.md     This file
+│   ├── SQL_GUIDE.md        SQL from scratch on this database
+│   ├── PACKAGING.md        Shipping it as a Windows app
+│   ├── layout.md           Short file map
+│   └── next_steps.md       Roadmap
 │
 ├── data/
 │   └── pokedex.sqlite      Build output — 55 MB, gitignored
@@ -258,11 +262,9 @@ is a list route and a detail route: `/` + `/pokemon/:id`, `/moves` +
 generation lives in the URL as `?gen=N`, so pages are linkable and the
 header search carries the current gen into whatever it navigates to.
 
-The three newer dexes share one shape: a list page (`useSort` +
-`useUrlFilters` + `SortTh`) and a detail page (`useDetail` + `GenTabs` +
-panels, ending in a `PokemonList` of the reverse lookup — who learns the
-move, who has the ability, who holds or evolves with the item). Move names
-in the species page's learnset and ability names in its header link across.
+The move, ability and item dexes share one shape: a list page (`useSort`,
+`useUrlFilters`, `SortTh`) and a detail page (`useDetail`, `GenTabs`,
+panels, then a `PokemonList` reverse lookup — who learns / has / holds it).
 
 ### `web/src/pages/SpeciesPage.tsx` — the species page
 
@@ -405,31 +407,27 @@ two description fields. Looked up by name when assembling a species page;
 
 ### `item` — 1,482 rows, plus `item_gen`, `item_avail`, `wild_held_item`
 
-Items come from both sources because neither is complete. veekun has the
-whole bag (`item`: category, pocket, cost, Fling, English effect prose) but
-no per-generation behaviour; Showdown has only the ~350 items that matter in
-battle, but per generation (`item_gen`: held effect, Natural Gift, Mega
-Stone target, Z-Move type, `item_user`). They join on `item.showdown_id`,
-derived from the identifier or, failing that, the English name (`stick` →
-Leek; `firium-z--held` → `firiumz`). A gen-8 rename (Stick → Leek) is
-aliased in the ETL so one row covers both.
+Neither source is complete on its own. veekun has the whole bag (`item`:
+category, pocket, cost, Fling, effect prose) with no per-gen behaviour;
+Showdown has only the ~350 battle items, but per generation (`item_gen`:
+held effect, Natural Gift, Mega Stone target, Z-Move type). They join on
+`item.showdown_id`, derived from the identifier or, failing that, the
+English name (`stick` → `leek`, `firium-z--held` → `firiumz`).
 
-Three veekun categories are dropped: per-game `TM01`–`TM221` item rows (the
-Movedex covers machines), 300 unnamed Dynamax crystals, and `unused` — except
-for the real Z-Crystals veekun misfiles there. Gen 2's berries and bows,
-which veekun lacks entirely, get synthetic rows (`item_id ≥ 100000`) from
-Showdown so they're still searchable.
+Dropped from veekun: per-game `TM01`–`TM221` rows, 300 unnamed Dynamax
+crystals, and `unused` (except the Z-Crystals misfiled there). Gen 2's
+berries and bows exist only in Showdown and get synthetic rows
+(`item_id ≥ 100000`).
 
-`item_avail` lists the generations an item exists in (from veekun's game
-indices and flavour text; Showdown's gens are unioned at query time).
-`wild_held_item` (5,448 rows) is veekun's per-game held-item table, keyed by
-form like `encounter`; it stops at gen 7.
+`item_avail` — which generations an item exists in. `wild_held_item`
+(5,448 rows) — veekun's per-game held items, keyed by form like
+`encounter`; ends at gen 7.
 
 ### `move_flavor_text`, `ability_flavor_text`, `item_flavor_text`
 
-veekun's in-game descriptions, one row per English version group, labelled
-`'Ultra Sun/Ultra Moon'` with a `vg_order` for sorting. Identical texts
-across games are merged in the UI, not the database.
+veekun's in-game descriptions, one row per version group
+(`'Ultra Sun/Ultra Moon'`), ordered by `vg_order`. Duplicate texts are
+merged in the UI.
 
 ### `type_chart` — 2,677 rows
 
@@ -571,9 +569,8 @@ npm run dev:api                    # pane 1 — backend on :3000
 cd web; npm run dev                # pane 2 — frontend on :5173
 ```
 Stop `dev:api` before `build:db` — the ETL replaces the file the server has
-open. Or build elsewhere and swap: `POKEDEX_DB=/tmp/next.sqlite npm run build:db`,
-then stop the server, copy the file over `data/pokedex.sqlite` (deleting any
-`-wal`/`-shm` sidecars) and restart.
+open. Or build to another path (`POKEDEX_DB=/tmp/next.sqlite npm run build:db`)
+and swap it in, deleting any `-wal`/`-shm` sidecars first.
 Open `http://localhost:5173`. Vite proxies `/api` and `/sprites` to the
 backend, so there's no CORS to configure.
 

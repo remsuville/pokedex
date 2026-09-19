@@ -2,9 +2,12 @@
 ├── package.json            ← backend deps
 ├── build-db.ts             ← the ETL
 ├── tsconfig.json
-├── ARCHITECTURE.md         ← the long-form guide
-├── next_steps.md           ← roadmap
-├── SQL_GUIDE.md            ← learn SQL on this database
+├── docs/
+│   ├── ARCHITECTURE.md     ← the long-form guide
+│   ├── SQL_GUIDE.md        ← learn SQL on this database
+│   ├── PACKAGING.md        ← shipping it as a Windows .exe
+│   ├── layout.md           ← this file
+│   └── next_steps.md       ← roadmap
 ├── data/
 │   └── pokedex.sqlite      ← built database (55 MB)
 ├── vendor/                 ← gitignored
