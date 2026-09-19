@@ -1,5 +1,6 @@
 import { NavLink, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { SearchBox } from './components/SearchBox';
+import { AssetGate } from './components/AssetGate';
 import { DexPage } from './pages/DexPage';
 import { SpeciesPage } from './pages/SpeciesPage';
 import { MoveDexPage } from './pages/MoveDexPage';
@@ -15,18 +16,20 @@ export default function App() {
     <>
       <Header />
       <main className="mx-auto max-w-5xl px-5 py-8">
-        <Routes>
-          <Route path="/" element={<DexPage />} />
-          <Route path="/pokemon/:id" element={<SpeciesPage />} />
-          <Route path="/moves" element={<MoveDexPage />} />
-          <Route path="/move/:id" element={<MovePage />} />
-          <Route path="/abilities" element={<AbilityDexPage />} />
-          <Route path="/ability/:id" element={<AbilityPage />} />
-          <Route path="/items" element={<ItemDexPage />} />
-          <Route path="/item/:id" element={<ItemPage />} />
-          <Route path="/sql" element={<SqlPage />} />
-          <Route path="*" element={<p className="py-20 text-center text-muted">Page not found.</p>} />
-        </Routes>
+        <AssetGate>
+          <Routes>
+            <Route path="/" element={<DexPage />} />
+            <Route path="/pokemon/:id" element={<SpeciesPage />} />
+            <Route path="/moves" element={<MoveDexPage />} />
+            <Route path="/move/:id" element={<MovePage />} />
+            <Route path="/abilities" element={<AbilityDexPage />} />
+            <Route path="/ability/:id" element={<AbilityPage />} />
+            <Route path="/items" element={<ItemDexPage />} />
+            <Route path="/item/:id" element={<ItemPage />} />
+            <Route path="/sql" element={<SqlPage />} />
+            <Route path="*" element={<p className="py-20 text-center text-muted">Page not found.</p>} />
+          </Routes>
+        </AssetGate>
       </main>
     </>
   );

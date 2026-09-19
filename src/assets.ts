@@ -78,8 +78,16 @@ export class AssetManager {
     (async () => {
       const todo = this.packs.filter(p => p.state !== 'ready').sort((a, b) => Number(b.required) - Number(a.required));
       for (const p of todo) {
-        try { await this.fetch(p); }
-        catch (e: any) { p.state = 'error'; p.error = e?.message ?? String(e); }
+        // a dropped connection just resumes; give up after a few tries and let the UI offer a retry
+        for (let attempt = 1; ; attempt++) {
+          try { await this.fetch(p); break; }
+          catch (e: any) {
+            const msg = String(e?.message ?? e);
+            p.error = /terminated|ECONNRESET|ECONNREFUSED|fetch failed|ENOTFOUND/i.test(msg) ? 'Connection lost' : msg;
+            if (attempt >= 3) { p.state = 'error'; break; }
+            await new Promise(r => setTimeout(r, 2000 * attempt));
+          }
+        }
       }
       this.running = false;
     })();

@@ -236,3 +236,23 @@ export interface ItemPayload {
   /** Evolutions this item triggers in this generation. */
   evolves: { from: PokemonRef; to: PokemonRef; method: string }[];
 }
+
+// ------------------------------------------------------------ sprite packs
+
+export type PackState = 'missing' | 'downloading' | 'verifying' | 'extracting' | 'ready' | 'error';
+
+export interface PackStatus {
+  name: string;
+  file: string;
+  size: number;
+  required: boolean;
+  description: string;
+  state: PackState;
+  received: number;
+  error: string | null;
+}
+
+/** `managed: false` in the web build, where sprites are already on disk. */
+export type AssetStatus =
+  | { managed: false }
+  | { managed: true; ready: boolean; busy: boolean; packs: PackStatus[] };

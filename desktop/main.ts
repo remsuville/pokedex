@@ -75,7 +75,7 @@ async function main() {
 
   const { port } = await start({
     host: '127.0.0.1',
-    port: 0,
+    port: Number(process.env.POKEDEX_PORT ?? 0),   // fixed port only for tests
     spriteRoot: paths.sprites,
     itemSpriteRoot: bundled.itemSprites,
     webDist: bundled.web,
