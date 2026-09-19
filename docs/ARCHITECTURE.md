@@ -101,12 +101,22 @@ The ETL's job is to reconcile the two.
 │
 ├── scratch/                Throwaway verification scripts, not part of the app
 │   ├── gen-check.ts        Proves gen-switching works at the source level
-│   └── show.ts             Prints one species payload as JSON
+│   ├── show.ts             Prints one species payload as JSON
+│   └── pack-server.ts      Serves sprite packs locally to test the desktop first run
+│
+├── scripts/
+│   └── pack-sprites.ts     Zips the sprite folders into downloadable packs
 │
 ├── src/
-│   ├── server.ts           Hono HTTP server — API and static sprites
+│   ├── server.ts           Hono app: createApp() + start(); run directly for the dev API
+│   ├── assets.ts           Sprite-pack downloader used by the desktop app
 │   └── db/
 │       └── queries.ts      ALL SQL lives here. The API boundary.
+│
+├── desktop/                Separate npm project — the Electron shell (see PACKAGING.md)
+│   ├── main.ts             Starts the server on localhost, opens the window
+│   ├── manifest.json       Sprite packs: sizes, checksums, download URL
+│   └── electron-builder.yml
 │
 └── web/                    Separate npm project — the frontend
     ├── package.json        Frontend dependencies
@@ -225,7 +235,10 @@ parameters.
 
 ### `src/server.ts` — the HTTP layer
 
-Deliberately thin. The routes:
+Deliberately thin. `createApp()` builds the Hono app; `start()` listens and
+reports the port; running the file directly (`dev:api`) binds `0.0.0.0:3000`,
+while the desktop shell calls `start()` on `127.0.0.1` with a free port and
+passes the built frontend to serve. The routes:
 
 | Route | Purpose |
 |---|---|
@@ -236,6 +249,7 @@ Deliberately thin. The routes:
 | `GET /api/search?q=&gen=N` | Name search within a generation (the UI filters the cached lists client-side instead) |
 | `GET /api/list/:gen` | Every form in a generation |
 | `GET /api/schema` | Tables and columns, for the SQL page sidebar |
+| `GET /api/assets/status`, `POST /api/assets/start` | Sprite-pack download progress (desktop only; the web build reports `managed: false`) |
 | `POST /api/query` `{sql}` | Runs one read-only statement, up to 500 rows. See the SQL page note |
 | `GET /sprites/*` | Static Pokémon sprites |
 | `GET /item-sprites/*` | Static item sprites, keyed by veekun identifier |

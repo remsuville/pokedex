@@ -1,0 +1,57 @@
+# Builds the Windows installer. Runs on every push of a tag like desktop-v0.2.0
+# and attaches Pokedex-Setup-<version>.exe to a GitHub Release for that tag.
+# Also runnable by hand from the Actions tab (artifact only, no release).
+name: desktop
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # to create the release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # veekun CSVs and the item sprites are the only vendor data the
+      # installer needs; the Pokémon sprites come from the packs at runtime
+      - name: Fetch veekun CSVs
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/PokeAPI/pokeapi.git vendor/pokeapi
+          git -C vendor/pokeapi sparse-checkout set data/v2/csv
+      - name: Fetch item sprites
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/PokeAPI/sprites.git vendor/sprites
+          git -C vendor/sprites sparse-checkout set sprites/items
+
+      - name: Build database
+        run: |
+          npm ci
+          npm run build:db
+      - name: Build web app
+        run: |
+          npm ci
+          npm run build
+        working-directory: web
+      - name: Build installer
+        run: |
+          npm ci
+          npm run pack:win
+        working-directory: desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pokedex-Setup
+          path: desktop/dist/*.exe
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/dist/*.exe
+          generate_release_notes: true

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "baseUrl": "https://github.com/remsuville/pokedex-assets/releases/download/sprites-v1/",
+  "packs": [
+    {
+      "name": "static",
+      "file": "sprites-static.zip",
+      "size": 71410153,
+      "sha256": "341acb312194eef5a3a022cd93adbbacbbe530634f410f774173e8861c43ea7a",
+      "required": true,
+      "description": "Game sprites for every generation, shinies and list thumbnails"
+    },
+    {
+      "name": "artwork",
+      "file": "sprites-artwork.zip",
+      "size": 194273289,
+      "sha256": "cc762c8c7915edf5a903720532e3288533e1992a96ff2b2e064667315cce6b8c",
+      "required": true,
+      "description": "Official artwork shown on each species page"
+    },
+    {
+      "name": "animated",
+      "file": "sprites-animated.zip",
+      "size": 436320410,
+      "sha256": "e06a39b759ac681ff3a2eaaadf44918c5154dbb65d005dccdc4726de50812d64",
+      "required": false,
+      "description": "Animated sprites for gens V–IX"
+    }
+  ]
+}
