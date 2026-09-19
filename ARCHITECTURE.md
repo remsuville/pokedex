@@ -89,7 +89,7 @@ The ETL's job is to reconcile the two.
 ├── SQL_GUIDE.md            Learning guide: SQL from scratch on this database, how each script uses it
 │
 ├── data/
-│   └── pokedex.sqlite      Build output — 44 MB, gitignored
+│   └── pokedex.sqlite      Build output — 55 MB, gitignored
 │
 ├── vendor/                 Third-party data — gitignored, cloned not committed
 │   ├── pokeapi/            veekun CSV dataset (41 MB, sparse checkout)
@@ -113,14 +113,29 @@ The ETL's job is to reconcile the two.
         ├── index.css       Tailwind theme, type colour tokens
         ├── types.ts        Payload interfaces, shared with the backend
         ├── lib/
-        │   ├── api.ts      fetch wrappers; the dex list is fetched once and cached
-        │   └── dex.ts      useDex() hook and matchDex() name/number search
+        │   ├── api.ts      fetch wrappers; the four lists are fetched once and cached
+        │   ├── dex.ts      useDex()/useMoves()/useAbilities()/useItems() and name search
+        │   ├── sort.ts     useSort() column sorting for the list pages
+        │   ├── filters.ts  useUrlFilters() — list filters live in ?q=&type=
+        │   └── useDetail.ts fetch-on-change hook shared by the detail pages
         ├── pages/
-        │   ├── DexPage.tsx      /            national dex table, filter + sort
-        │   ├── SpeciesPage.tsx  /pokemon/:id the species page
-        │   └── SqlPage.tsx      /sql         read-only SQL console with schema sidebar
+        │   ├── DexPage.tsx        /              national dex table, filter + sort
+        │   ├── SpeciesPage.tsx    /pokemon/:id   the species page
+        │   ├── MoveDexPage.tsx    /moves         every move, filter by type/category
+        │   ├── MovePage.tsx       /move/:id      stats, effect, game text, who learns it
+        │   ├── AbilityDexPage.tsx /abilities     every ability with a Pokémon count
+        │   ├── AbilityPage.tsx    /ability/:id   effect, game text, who has it
+        │   ├── ItemDexPage.tsx    /items         the bag, filter by pocket/category
+        │   ├── ItemPage.tsx       /item/:id      effect, evolutions, wild holders
+        │   └── SqlPage.tsx        /sql           read-only SQL console with schema sidebar
         └── components/
-            ├── SearchBox.tsx   Header combobox, keyboard-navigable
+            ├── SearchBox.tsx   Header combobox over all four dexes, keyboard-navigable
+            ├── GenTabs.tsx     The generation switcher on every detail page
+            ├── TabStrip.tsx    Tab row inside a panel (learn methods, games)
+            ├── PokemonList.tsx "Pokémon that…" table on move/ability/item pages
+            ├── FlavorList.tsx  In-game descriptions per version group, duplicates merged
+            ├── Filters.tsx     Filter input/select and the list-page header
+            ├── SortTh.tsx      Sortable column header
             ├── PixelSprite.tsx Game sprite at a whole-number scale, bottom-aligned
             ├── Tooltip.tsx     Hover/focus/tap description popup for moves and abilities
             ├── TypeDefenses.tsx Weakness grid, one cell per attacking type
@@ -206,17 +221,20 @@ parameters.
 
 ### `src/server.ts` — the HTTP layer
 
-Deliberately thin, about twenty lines. Four routes:
+Deliberately thin. The routes:
 
 | Route | Purpose |
 |---|---|
 | `GET /api/species` | The national dex: all 1,025 species at their latest generation. Built once, cached in memory |
 | `GET /api/species/:id?gen=N` | Full payload for one form. `gen` is optional (default: latest available); an unavailable gen resolves to the nearest one and `payload.gen` reports what was served |
-| `GET /api/search?q=&gen=N` | Name search within a generation (the UI filters the cached dex list client-side instead) |
+| `GET /api/moves`, `/api/abilities`, `/api/items` | The other three dexes, each at its latest generation. Built once, cached |
+| `GET /api/moves/:id?gen=N`, `/api/abilities/:id?gen=N`, `/api/items/:id?gen=N` | Detail payloads with the same gen semantics as species. Move and ability ids are Showdown ids (`knockoff`); item ids are veekun identifiers (`sitrus-berry`) because Showdown only knows battle items |
+| `GET /api/search?q=&gen=N` | Name search within a generation (the UI filters the cached lists client-side instead) |
 | `GET /api/list/:gen` | Every form in a generation |
 | `GET /api/schema` | Tables and columns, for the SQL page sidebar |
 | `POST /api/query` `{sql}` | Runs one read-only statement, up to 500 rows. See the SQL page note |
-| `GET /sprites/*` | Static sprite files |
+| `GET /sprites/*` | Static Pokémon sprites |
+| `GET /item-sprites/*` | Static item sprites, keyed by veekun identifier |
 
 Binds to `0.0.0.0`, so other machines on the LAN can reach it.
 
@@ -234,10 +252,17 @@ LAN tool; don't expose the port to the internet.
 
 ### `web/src/App.tsx` — routing
 
-The sticky header (logo, `SearchBox`) and the route table: `/` is
-`DexPage`, `/pokemon/:id` is `SpeciesPage`. The generation lives in the URL
-as `?gen=N`, so pages are linkable and the header search carries the current
-gen into whatever it navigates to.
+The sticky header (logo, nav, `SearchBox`) and the route table. Each dex
+is a list route and a detail route: `/` + `/pokemon/:id`, `/moves` +
+`/move/:id`, `/abilities` + `/ability/:id`, `/items` + `/item/:id`. The
+generation lives in the URL as `?gen=N`, so pages are linkable and the
+header search carries the current gen into whatever it navigates to.
+
+The three newer dexes share one shape: a list page (`useSort` +
+`useUrlFilters` + `SortTh`) and a detail page (`useDetail` + `GenTabs` +
+panels, ending in a `PokemonList` of the reverse lookup — who learns the
+move, who has the ability, who holds or evolves with the item). Move names
+in the species page's learnset and ability names in its header link across.
 
 ### `web/src/pages/SpeciesPage.tsx` — the species page
 
@@ -368,10 +393,43 @@ Move stats per generation, since moves are rebalanced between games.
 `short_desc` and `desc` are Showdown's one-line and full effect text, also
 per generation (Bite: "10% chance to flinch" in gen 1, 30% from gen 2).
 
+Also per generation: Showdown's `target`, `flags` (space-separated:
+`contact protect sound…`), `secondary_chance`, `crit_ratio`, and the Z-Move
+(gen 7) and Max Move (gen 8) power.
+
 ### `ability_gen` — 1,364 rows
 
 Every ability that exists in each generation (gen 3 onward), with the same
-two description fields. Looked up by name when assembling a species page.
+two description fields. Looked up by name when assembling a species page;
+`pokemon_gen` stores ability *names*, so the ability page queries by name too.
+
+### `item` — 1,482 rows, plus `item_gen`, `item_avail`, `wild_held_item`
+
+Items come from both sources because neither is complete. veekun has the
+whole bag (`item`: category, pocket, cost, Fling, English effect prose) but
+no per-generation behaviour; Showdown has only the ~350 items that matter in
+battle, but per generation (`item_gen`: held effect, Natural Gift, Mega
+Stone target, Z-Move type, `item_user`). They join on `item.showdown_id`,
+derived from the identifier or, failing that, the English name (`stick` →
+Leek; `firium-z--held` → `firiumz`). A gen-8 rename (Stick → Leek) is
+aliased in the ETL so one row covers both.
+
+Three veekun categories are dropped: per-game `TM01`–`TM221` item rows (the
+Movedex covers machines), 300 unnamed Dynamax crystals, and `unused` — except
+for the real Z-Crystals veekun misfiles there. Gen 2's berries and bows,
+which veekun lacks entirely, get synthetic rows (`item_id ≥ 100000`) from
+Showdown so they're still searchable.
+
+`item_avail` lists the generations an item exists in (from veekun's game
+indices and flavour text; Showdown's gens are unioned at query time).
+`wild_held_item` (5,448 rows) is veekun's per-game held-item table, keyed by
+form like `encounter`; it stops at gen 7.
+
+### `move_flavor_text`, `ability_flavor_text`, `item_flavor_text`
+
+veekun's in-game descriptions, one row per English version group, labelled
+`'Ultra Sun/Ultra Moon'` with a `vg_order` for sorting. Identical texts
+across games are merged in the UI, not the database.
 
 ### `type_chart` — 2,677 rows
 
@@ -404,13 +462,18 @@ weather and story-progress conditions are kept.
 | `species_egg_group` | 1,304 | Breeding compatibility groups |
 | `species_name` | 12,300 | Names in 13 languages |
 | `flavor_text` | 68,220 | Pokédex entries per game version |
+| `item_avail` | 5,174 | Generations each item exists in |
+| `item_flavor_text` | 6,515 | Item descriptions per version group |
+| `move_flavor_text` | 9,635 | Move descriptions per version group |
+| `ability_flavor_text` | 2,542 | Ability descriptions per version group |
 
 ### Indexes
 
-Eleven, all on the lookup paths the API actually uses — `pokemon_gen` by
-gen, species, number and prevo; `learnset` by form and level; `move_gen`,
-`flavor_text`, `species_name` and `encounter` by their join keys. Built
-after bulk insert rather than before, which is significantly faster.
+Twenty-one, all on the lookup paths the API actually uses — `pokemon_gen` by
+gen, species, number, prevo, abilities and `evo_item_id`; `learnset` by form
+and level and, for the move page's reverse lookup, by move; the flavour and
+held-item tables by their join keys. Built after bulk insert rather than
+before, which is significantly faster.
 
 ---
 
@@ -508,7 +571,9 @@ npm run dev:api                    # pane 1 — backend on :3000
 cd web; npm run dev                # pane 2 — frontend on :5173
 ```
 Stop `dev:api` before `build:db` — the ETL replaces the file the server has
-open.
+open. Or build elsewhere and swap: `POKEDEX_DB=/tmp/next.sqlite npm run build:db`,
+then stop the server, copy the file over `data/pokedex.sqlite` (deleting any
+`-wal`/`-shm` sidecars) and restart.
 Open `http://localhost:5173`. Vite proxies `/api` and `/sprites` to the
 backend, so there's no CORS to configure.
 

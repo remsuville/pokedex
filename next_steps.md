@@ -5,8 +5,9 @@ What's left, in the order I'd do it
 3. ~~Type effectiveness table~~ — done. `type_chart` table in the ETL, `typeDefenses` in the payload, grid on the species page.
 4. ~~Encounter locations~~ — done for gens 1–8 (veekun has no BDSP/PLA/SV data). Per-game tabs on the species page.
 5. ~~Remaining move methods~~ — done. Tabs per method with TM/HM/TR numbers from veekun's machines.csv; egg moves inherited from the basic stage.
-6. Competitive sets — the pkmn.cc layer.
-7. Tauri packaging — the .exe for your friend.
+6. ~~Movedex, Abilitydex, Itemdex~~ — done. `/moves`, `/abilities`, `/items` with detail pages, gen tabs, game descriptions and reverse lookups (who learns it / has it / holds it / evolves with it). Header search covers all four.
+7. Competitive sets — the pkmn.cc layer.
+8. Tauri packaging — the .exe for your friend.
 
 Both remaining steps are additive.
 

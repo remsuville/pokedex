@@ -2,9 +2,10 @@
  * build-db.ts — merges Pokemon Showdown's per-generation data with the
  * veekun/PokeAPI CSV dataset into a single SQLite file.
  *
- *   Showdown  -> gen-accurate base stats, types, abilities, learnsets, moves
+ *   Showdown  -> gen-accurate base stats, types, abilities, learnsets, moves,
+ *                battle items
  *   veekun    -> catch rate, base exp, egg cycles, EV yield, flavour text,
- *                foreign names, genus
+ *                foreign names, genus, the full item catalogue, wild held items
  *
  * Run:  npm run build:db
  */
@@ -17,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const CSV_DIR = './vendor/pokeapi/data/v2/csv';
-const OUT = './data/pokedex.sqlite';
+const OUT = process.env.POKEDEX_DB ?? './data/pokedex.sqlite';
 const GENS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 // ---------------------------------------------------------------- helpers
@@ -77,6 +78,18 @@ const csvLocationNames  = readCSV('location_names.csv');
 const csvLocationAreas  = readCSV('location_areas.csv');
 const csvAreaProse      = readCSV('location_area_prose.csv');
 const csvRegions        = readCSV('regions.csv');
+const csvItemNames      = readCSV('item_names.csv');
+const csvItemProse      = readCSV('item_prose.csv');
+const csvItemFlavor     = readCSV('item_flavor_text.csv');
+const csvItemCategories = readCSV('item_categories.csv');
+const csvItemCatProse   = readCSV('item_category_prose.csv');
+const csvItemPockets    = readCSV('item_pocket_names.csv');
+const csvItemGameIdx    = readCSV('item_game_indices.csv');
+const csvFlingEffects   = readCSV('item_fling_effect_prose.csv');
+const csvPokemonItems   = readCSV('pokemon_items.csv');
+const csvAbilities      = readCSV('abilities.csv');
+const csvAbilityFlavor  = readCSV('ability_flavor_text.csv');
+const csvMoveFlavor     = readCSV('move_flavor_text.csv');
 
 const statById      = index(csvStatNames, r => r.id);
 const growthById    = index(csvGrowthRates, r => r.id);
@@ -102,6 +115,21 @@ const defaultPokemonBySpecies = index(
   csvPokemon.filter(r => r.is_default === '1'),
   r => r.species_id,
 );
+
+/** English-only rows of a localised table. */
+const en = <T extends { local_language_id?: string; language_id?: string }>(rows: T[]) =>
+  rows.filter(r => (r.local_language_id ?? r.language_id) === '9');
+
+// version groups, for labelling per-game text: 'Ultra Sun/Ultra Moon'
+const versionGroupById = index(csvVersionGroups, r => r.id);
+const versionsByGroup  = group(csvVersions, r => r.version_group_id);
+const versionNameEn    = index(en(csvVersionNames), r => r.version_id);
+const versionGroupLabel = (vgId: string) =>
+  (versionsByGroup.get(vgId) ?? []).map(v => versionNameEn.get(v.id)?.name ?? v.identifier).join('/');
+const versionGroupGen = (vgId: string) => Number(versionGroupById.get(vgId)?.generation_id) || null;
+
+/** veekun's flavour text has hard line breaks and soft hyphens. */
+const cleanFlavor = (t: string) => t.replace(/\u00ad/g, '').replace(/[\n\f\r]+/g, ' ').trim();
 
 console.log(`  ${csvSpecies.length} species, ${csvPokemon.length} pokemon forms`);
 
@@ -200,6 +228,7 @@ CREATE TABLE pokemon_gen (
   evo_level     INTEGER,
   evo_type      TEXT,           -- levelFriendship useItem trade levelHold levelMove levelExtra other; NULL = plain level
   evo_item      TEXT,
+  evo_item_id   TEXT,           -- toID(evo_item), for joining to item.showdown_id
   evo_move      TEXT,
   evo_condition TEXT,           -- free text, e.g. "at night"
   evo_region    TEXT,           -- only evolves here, e.g. "Alola"
@@ -264,6 +293,14 @@ CREATE TABLE move_gen (
   priority   INTEGER,
   short_desc TEXT,      -- one line, e.g. '10% chance to paralyze the target.'
   desc       TEXT,      -- full rules text; both are per generation
+  num              INTEGER,   -- Showdown's move number, roughly the order of introduction
+  gen_introduced   INTEGER,
+  target           TEXT,      -- Showdown target: normal, self, allAdjacentFoes...
+  flags            TEXT,      -- space-separated Showdown flags: contact protect sound...
+  secondary_chance INTEGER,   -- % chance of the secondary effect, when there is one
+  crit_ratio       INTEGER,   -- 1 = normal, 2 = high crit ratio
+  z_power          INTEGER,   -- gen 7
+  max_power        INTEGER,   -- gen 8
   PRIMARY KEY (move_id, gen)
 );
 
@@ -273,7 +310,87 @@ CREATE TABLE ability_gen (
   name       TEXT NOT NULL,
   short_desc TEXT,
   desc       TEXT,
+  num            INTEGER,
+  gen_introduced INTEGER,
   PRIMARY KEY (ability_id, gen)
+);
+
+-- in-game descriptions, one per version group the move/ability appears in
+CREATE TABLE move_flavor_text (
+  move_id       TEXT NOT NULL,
+  gen           INTEGER NOT NULL,
+  version_group TEXT NOT NULL,    -- 'Ultra Sun/Ultra Moon'
+  vg_order      INTEGER NOT NULL,
+  text          TEXT NOT NULL
+);
+
+CREATE TABLE ability_flavor_text (
+  ability_id    TEXT NOT NULL,
+  gen           INTEGER NOT NULL,
+  version_group TEXT NOT NULL,
+  vg_order      INTEGER NOT NULL,
+  text          TEXT NOT NULL
+);
+
+-- the full item catalogue from veekun: balls, medicine, key items, berries...
+CREATE TABLE item (
+  item_id        INTEGER PRIMARY KEY,   -- veekun id
+  identifier     TEXT NOT NULL,         -- 'sitrus-berry', also the sprite file stem
+  showdown_id    TEXT NOT NULL,         -- 'sitrusberry'; joins item_gen where Showdown knows the item
+  name           TEXT NOT NULL,
+  category       TEXT,                  -- 'Picky healing'
+  pocket         TEXT,                  -- 'Berries'
+  cost           INTEGER,
+  fling_power    INTEGER,
+  fling_effect   TEXT,
+  gen_introduced INTEGER,
+  short_effect   TEXT,                  -- veekun's English prose; not every item has one
+  effect         TEXT
+);
+
+-- generations the item exists in: veekun's game indices and flavour text, plus Showdown
+CREATE TABLE item_avail (
+  item_id INTEGER NOT NULL,
+  gen     INTEGER NOT NULL,
+  PRIMARY KEY (item_id, gen)
+);
+
+CREATE TABLE item_flavor_text (
+  item_id       INTEGER NOT NULL,
+  gen           INTEGER NOT NULL,
+  version_group TEXT NOT NULL,
+  vg_order      INTEGER NOT NULL,
+  text          TEXT NOT NULL
+);
+
+-- Showdown's battle items, per generation: what the item does when held
+CREATE TABLE item_gen (
+  showdown_id        TEXT NOT NULL,
+  gen                INTEGER NOT NULL,
+  name               TEXT NOT NULL,
+  num                INTEGER,
+  short_desc         TEXT,
+  desc               TEXT,
+  is_berry           INTEGER NOT NULL,
+  natural_gift_type  TEXT,
+  natural_gift_power INTEGER,
+  fling_power        INTEGER,
+  mega_evolves       TEXT,        -- 'Charizard-Mega-X'
+  z_move_type        TEXT,        -- 'Fire' for Firium Z
+  item_user          TEXT,        -- JSON array of species names the item is made for
+  PRIMARY KEY (showdown_id, gen)
+);
+
+-- items wild Pokémon can be holding, per game
+CREATE TABLE wild_held_item (
+  form_id       TEXT NOT NULL,
+  species_id    INTEGER NOT NULL,
+  is_default    INTEGER NOT NULL,
+  gen           INTEGER NOT NULL,
+  version       TEXT NOT NULL,
+  version_order INTEGER NOT NULL,
+  item_id       INTEGER NOT NULL,
+  rarity        INTEGER NOT NULL  -- percent
 );
 `);
 
@@ -386,7 +503,6 @@ db.transaction(() => {
 console.log('Writing encounters...');
 
 {
-  const en = (rows: Record<string, string>[]) => rows.filter(r => r.local_language_id === '9');
   const vgById       = index(csvVersionGroups, r => r.id);
   const versionById2 = index(csvVersions, r => r.id);
   const versionName  = index(en(csvVersionNames), r => r.version_id);
@@ -480,20 +596,155 @@ console.log('Writing encounters...');
   console.log(`  ${csvEncounters.length} slot rows -> ${agg.size} encounter rows`);
 }
 
+// ------------------------------------------------------------------ items
+
+console.log('Writing items...');
+
+// Per-game TM01–TM221 entries (the Movedex covers machines), 300 unnamed
+// Dynamax crystals and veekun's own 'unused' bucket add nothing to a catalogue.
+const SKIP_ITEM_CATEGORIES = new Set(['all-machines', 'dynamax-crystals', 'unused']);
+
+{
+  const categoryById = index(csvItemCategories, r => r.id);
+  const categoryName = index(en(csvItemCatProse), r => r.item_category_id);
+  const pocketName   = index(en(csvItemPockets), r => r.item_pocket_id);
+  const flingEffect  = index(en(csvFlingEffects), r => r.item_fling_effect_id);
+  const itemNameEn   = index(en(csvItemNames), r => r.item_id);
+  const itemProseEn  = index(en(csvItemProse), r => r.item_id);
+  const gameIdxByItem = group(csvItemGameIdx, r => r.item_id);
+  const flavorByItem  = group(en(csvItemFlavor), r => r.item_id);
+  const versionById2  = index(csvVersions, r => r.id);
+  const pokemonById   = index(csvPokemon, r => r.id);
+
+  // Showdown IDs come from the English name, so 'stick' is 'leek' and
+  // 'firium-z--held' is 'firiumz': try the identifier first, then the name.
+  const showdownItemIds = new Set<string>();
+  for (const g of GENS) for (const it of new Generations(Dex).get(g).items) showdownItemIds.add(it.id);
+  const showdownIdFor = (identifier: string, name: string) =>
+    showdownItemIds.has(toID(identifier)) ? toID(identifier)
+    : showdownItemIds.has(toID(name)) ? toID(name)
+    : toID(identifier);
+
+  const insItem = db.prepare(`INSERT INTO item VALUES
+    (@item_id,@identifier,@showdown_id,@name,@category,@pocket,@cost,@fling_power,@fling_effect,
+     @gen_introduced,@short_effect,@effect)`);
+  const insAvail = db.prepare('INSERT OR IGNORE INTO item_avail VALUES (?,?)');
+  const insItemFlavor = db.prepare('INSERT INTO item_flavor_text VALUES (?,?,?,?,?)');
+  const insHeld = db.prepare('INSERT INTO wild_held_item VALUES (?,?,?,?,?,?,?,?)');
+
+  const kept = new Set<string>();
+  const seenIdentifiers = new Set<string>();
+  db.transaction(() => {
+    for (const it of csvItems) {
+      const cat = categoryById.get(it.category_id);
+      const name = itemNameEn.get(it.id)?.name ?? it.identifier;
+      if (!cat) continue;
+      // veekun files a few real Z-Crystals (Kommonium Z, Lunalium Z) under
+      // 'unused', as a bag icon and a held icon; keep the held one
+      const misfiled = cat.identifier === 'unused' && !it.identifier.endsWith('--bag') && showdownItemIds.has(toID(name));
+      if (SKIP_ITEM_CATEGORIES.has(cat.identifier) && !misfiled) continue;
+      // Z-Crystals are two rows, 'firium-z--bag' (unused) and 'firium-z--held';
+      // the one that survives goes by the plain name
+      const identifier = it.identifier.replace(/--held$/, '');
+      if (seenIdentifiers.has(identifier)) continue;   // veekun lists Roseli Berry twice
+      seenIdentifiers.add(identifier);
+      kept.add(it.id);
+
+      const gens = new Set<number>();
+      for (const gi of gameIdxByItem.get(it.id) ?? []) gens.add(Number(gi.generation_id));
+      for (const f of flavorByItem.get(it.id) ?? []) {
+        const g = versionGroupGen(f.version_group_id);
+        if (!g) continue;
+        gens.add(g);
+        insItemFlavor.run(Number(it.id), g, versionGroupLabel(f.version_group_id),
+          Number(versionGroupById.get(f.version_group_id)?.order ?? 0), cleanFlavor(f.flavor_text));
+      }
+      for (const g of gens) insAvail.run(Number(it.id), g);
+
+      const prose = itemProseEn.get(it.id);
+      insItem.run({
+        item_id: Number(it.id),
+        identifier,
+        showdown_id: showdownIdFor(identifier, name),
+        name,
+        category: categoryName.get(cat.id)?.name ?? cat.identifier,
+        pocket: pocketName.get(cat.pocket_id)?.name ?? cat.pocket_id,
+        cost: it.cost ? Number(it.cost) : null,
+        fling_power: it.fling_power ? Number(it.fling_power) : null,
+        fling_effect: it.fling_effect_id ? flingEffect.get(it.fling_effect_id)?.effect ?? null : null,
+        gen_introduced: gens.size ? Math.min(...gens) : null,
+        short_effect: prose?.short_effect || null,
+        effect: prose?.effect || null,
+      });
+    }
+
+    for (const r of csvPokemonItems) {
+      if (!kept.has(r.item_id)) continue;
+      const pk = pokemonById.get(r.pokemon_id);
+      const version = versionById2.get(r.version_id);
+      const vg = version && versionGroupById.get(version.version_group_id);
+      if (!pk || !vg) continue;
+      const species = speciesByNum.get(pk.species_id)!;
+      const isDefault = pk.is_default === '1';
+      insHeld.run(
+        toID(isDefault ? species.identifier : pk.identifier),
+        Number(pk.species_id), isDefault ? 1 : 0, Number(vg.generation_id),
+        versionNameEn.get(version.id)?.name ?? version.identifier, Number(version.id),
+        Number(r.item_id), Number(r.rarity),
+      );
+    }
+  })();
+  console.log(`  ${kept.size} of ${csvItems.length} items kept`);
+}
+
+// ------------------------------------------- move and ability flavour text
+
+console.log('Writing move and ability descriptions...');
+
+{
+  const abilityById = index(csvAbilities, r => r.id);
+  const insMoveFlavor = db.prepare('INSERT INTO move_flavor_text VALUES (?,?,?,?,?)');
+  const insAbilityFlavor = db.prepare('INSERT INTO ability_flavor_text VALUES (?,?,?,?,?)');
+  db.transaction(() => {
+    for (const f of en(csvMoveFlavor)) {
+      const move = moveById.get(f.move_id);
+      const g = versionGroupGen(f.version_group_id);
+      if (!move || !g) continue;
+      insMoveFlavor.run(toID(move.identifier), g, versionGroupLabel(f.version_group_id),
+        Number(versionGroupById.get(f.version_group_id)?.order ?? 0), cleanFlavor(f.flavor_text));
+    }
+    for (const f of en(csvAbilityFlavor)) {
+      const ab = abilityById.get(f.ability_id);
+      const g = versionGroupGen(f.version_group_id);
+      if (!ab || !g) continue;
+      insAbilityFlavor.run(toID(ab.identifier), g, versionGroupLabel(f.version_group_id),
+        Number(versionGroupById.get(f.version_group_id)?.order ?? 0), cleanFlavor(f.flavor_text));
+    }
+  })();
+}
+
 // ------------------------------------------------ per-generation pokemon
 
-console.log('Writing per-generation pokemon, learnsets and moves...');
+console.log('Writing per-generation pokemon, learnsets, moves, abilities and items...');
 
 const gens = new Generations(Dex);
 
 const insPoke = db.prepare(`INSERT OR REPLACE INTO pokemon_gen VALUES
   (@showdown_id,@gen,@species_id,@name,@base_species,@forme,@num,@sprite_id,@type1,@type2,
    @hp,@atk,@def,@spa,@spd,@spe,@bst,@ability0,@ability1,@abilityH,
-   @heightm,@weightkg,@prevo,@evo_level,@evo_type,@evo_item,@evo_move,@evo_condition,@evo_region)`);
+   @heightm,@weightkg,@prevo,@evo_level,@evo_type,@evo_item,@evo_item_id,@evo_move,@evo_condition,@evo_region)`);
 const insLearn = db.prepare('INSERT INTO learnset VALUES (?,?,?,?,?,?)');
 const insMove  = db.prepare(`INSERT OR REPLACE INTO move_gen VALUES
-  (@move_id,@gen,@name,@type,@category,@power,@accuracy,@pp,@priority,@short_desc,@desc)`);
-const insAbility = db.prepare('INSERT OR REPLACE INTO ability_gen VALUES (?,?,?,?,?)');
+  (@move_id,@gen,@name,@type,@category,@power,@accuracy,@pp,@priority,@short_desc,@desc,
+   @num,@gen_introduced,@target,@flags,@secondary_chance,@crit_ratio,@z_power,@max_power)`);
+const insAbility = db.prepare('INSERT OR REPLACE INTO ability_gen VALUES (?,?,?,?,?,?,?)');
+const insItemGen = db.prepare(`INSERT OR REPLACE INTO item_gen VALUES
+  (@showdown_id,@gen,@name,@num,@short_desc,@desc,@is_berry,@natural_gift_type,@natural_gift_power,
+   @fling_power,@mega_evolves,@z_move_type,@item_user)`);
+const qItemKnown = db.prepare('SELECT 1 FROM item WHERE showdown_id = ?');
+// Showdown renamed Stick to Leek in gen 8; veekun has one row for both
+const ITEM_ALIASES: Record<string, string> = { leek: 'stick' };
+const unknownItems = new Set<string>();
 const insType  = db.prepare('INSERT INTO type_chart VALUES (?,?,?,?)');
 
 // Types a Pokémon can actually have. '???' is Curse's type in gens 2-4 and
@@ -542,11 +793,41 @@ for (const g of GENS) {
         priority: move.priority ?? 0,
         short_desc: move.shortDesc || null,
         desc: move.desc || null,
+        num: move.num ?? null,
+        gen_introduced: move.gen ?? null,
+        target: move.target ?? null,
+        flags: Object.keys(move.flags ?? {}).sort().join(' ') || null,
+        secondary_chance: move.secondary?.chance ?? move.secondaries?.[0]?.chance ?? null,
+        crit_ratio: move.critRatio ?? null,
+        z_power: g === 7 ? (move.zMove as any)?.basePower ?? null : null,
+        max_power: g === 8 ? (move.maxMove as any)?.basePower ?? null : null,
       });
     }
 
     for (const ab of gen.abilities) {
-      insAbility.run(ab.id, g, ab.name, ab.shortDesc || null, ab.desc || null);
+      insAbility.run(ab.id, g, ab.name, ab.shortDesc || null, ab.desc || null, ab.num ?? null, ab.gen ?? null);
+    }
+
+    for (const it of gen.items) {
+      if (/^tr\d\d$/.test(it.id)) continue;      // Sword/Shield's consumable TRs
+      const itemId = ITEM_ALIASES[it.id] ?? it.id;
+      if (!qItemKnown.get(itemId)) unknownItems.add(itemId);
+      const mega = it.megaStone ? Object.values(it.megaStone)[0] : null;
+      insItemGen.run({
+        showdown_id: itemId,
+        gen: g,
+        name: it.name,
+        num: it.num ?? null,
+        short_desc: it.shortDesc || null,
+        desc: it.desc || null,
+        is_berry: it.isBerry ? 1 : 0,
+        natural_gift_type: it.naturalGift?.type ?? null,
+        natural_gift_power: it.naturalGift?.basePower ?? null,
+        fling_power: it.fling?.basePower ?? null,
+        mega_evolves: mega ?? null,
+        z_move_type: typeof it.zMoveType === 'string' ? it.zMoveType : null,
+        item_user: it.itemUser?.length ? JSON.stringify(it.itemUser) : null,
+      });
     }
 
     for (const sp of gen.species) {
@@ -584,6 +865,7 @@ for (const g of GENS) {
         evo_level: sp.evoLevel ?? null,
         evo_type: sp.evoType ?? null,
         evo_item: sp.evoItem ?? null,
+        evo_item_id: sp.evoItem ? toID(sp.evoItem) : null,
         evo_move: sp.evoMove ?? null,
         evo_condition: sp.evoCondition ?? null,
         evo_region: sp.evoRegion ?? null,
@@ -597,6 +879,21 @@ for (const g of GENS) {
 }
 
 if (unresolved) console.warn(`WARNING: ${unresolved} forms did not resolve to a veekun species`);
+if (unknownItems.size) console.warn(`WARNING: ${unknownItems.size} Showdown items have no veekun row: ${[...unknownItems].join(', ')}`);
+
+// Showdown items veekun lacks still get a catalogue row so they're searchable
+db.transaction(() => {
+  const ins = db.prepare(`INSERT INTO item (item_id, identifier, showdown_id, name, gen_introduced)
+    VALUES (?,?,?,?,?)`);
+  const insAvail = db.prepare('INSERT OR IGNORE INTO item_avail VALUES (?,?)');
+  let nextId = 100000;
+  for (const id of unknownItems) {
+    const rows = db.prepare('SELECT gen, name FROM item_gen WHERE showdown_id = ? ORDER BY gen').all(id) as any[];
+    ins.run(nextId, id, id, rows[0].name, rows[0].gen);
+    for (const r of rows) insAvail.run(nextId, r.gen);
+    nextId++;
+  }
+})();
 
 // ---------------------------------------------------------------- indexes
 
@@ -613,6 +910,16 @@ CREATE INDEX idx_enc_form        ON encounter(form_id, gen);
 CREATE INDEX idx_enc_species     ON encounter(species_id, gen);
 CREATE INDEX idx_flavor_species  ON flavor_text(species_id, language);
 CREATE INDEX idx_name_species    ON species_name(species_id, language);
+CREATE INDEX idx_learn_move      ON learnset(move_id, gen);
+CREATE INDEX idx_poke_ability    ON pokemon_gen(gen, ability0, ability1, abilityH);
+CREATE INDEX idx_poke_evo_item   ON pokemon_gen(evo_item_id, gen);
+CREATE INDEX idx_item_showdown   ON item(showdown_id);
+CREATE INDEX idx_item_flavor     ON item_flavor_text(item_id, gen);
+CREATE INDEX idx_item_avail      ON item_avail(item_id);
+CREATE INDEX idx_move_flavor     ON move_flavor_text(move_id, gen);
+CREATE INDEX idx_ability_flavor  ON ability_flavor_text(ability_id, gen);
+CREATE INDEX idx_held_item       ON wild_held_item(item_id, gen);
+CREATE INDEX idx_held_form       ON wild_held_item(form_id, gen);
 `);
 
 db.pragma('optimize');

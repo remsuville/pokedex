@@ -6,7 +6,7 @@
 ├── next_steps.md           ← roadmap
 ├── SQL_GUIDE.md            ← learn SQL on this database
 ├── data/
-│   └── pokedex.sqlite      ← built database
+│   └── pokedex.sqlite      ← built database (55 MB)
 ├── vendor/                 ← gitignored
 │   ├── pokeapi/            ← veekun CSVs
 │   └── sprites/            ← sprite images
@@ -27,13 +27,28 @@
         ├── types.ts        ← payload shapes, mirrored from queries.ts
         ├── lib/
         │   ├── api.ts      ← fetch wrappers
-        │   └── dex.ts      ← useDex() + name/number search
+        │   ├── dex.ts      ← list hooks + name/number search
+        │   ├── sort.ts     ← column sorting
+        │   ├── filters.ts  ← URL-backed list filters
+        │   └── useDetail.ts
         ├── pages/
-        │   ├── DexPage.tsx       ← /            national dex table
-        │   ├── SpeciesPage.tsx   ← /pokemon/:id the species page
-        │   └── SqlPage.tsx       ← /sql         read-only SQL console
+        │   ├── DexPage.tsx        ← /            national dex table
+        │   ├── SpeciesPage.tsx    ← /pokemon/:id the species page
+        │   ├── MoveDexPage.tsx    ← /moves
+        │   ├── MovePage.tsx       ← /move/:id
+        │   ├── AbilityDexPage.tsx ← /abilities
+        │   ├── AbilityPage.tsx    ← /ability/:id
+        │   ├── ItemDexPage.tsx    ← /items
+        │   ├── ItemPage.tsx       ← /item/:id
+        │   └── SqlPage.tsx        ← /sql         read-only SQL console
         └── components/
             ├── SearchBox.tsx
+            ├── GenTabs.tsx
+            ├── TabStrip.tsx
+            ├── PokemonList.tsx
+            ├── FlavorList.tsx
+            ├── Filters.tsx
+            ├── SortTh.tsx
             ├── PixelSprite.tsx
             ├── Tooltip.tsx
             ├── TypePill.tsx

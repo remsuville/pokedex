@@ -12,6 +12,7 @@ import path from 'node:path';
 
 const DB_PATH     = process.env.POKEDEX_DB ?? './data/pokedex.sqlite';
 const SPRITE_ROOT = process.env.SPRITE_ROOT ?? './vendor/sprites/sprites/pokemon';
+const ITEM_SPRITE_ROOT = process.env.ITEM_SPRITE_ROOT ?? './vendor/sprites/sprites/items';
 
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 db.pragma('journal_mode = WAL');
@@ -137,6 +138,127 @@ export interface DexEntry {
   stats: Record<StatKey, number>;
   bst: number;
   sprite: string | null;
+}
+
+/** A Pokémon in a list on a move, ability or item page. */
+export interface PokemonRef {
+  id: string;
+  name: string;
+  num: number | null;
+  forme: string | null;
+  types: string[];
+  sprite: string | null;
+}
+
+export interface FlavorEntry {
+  versionGroup: string;   // 'Ultra Sun/Ultra Moon'
+  text: string;
+}
+
+export interface MoveDexEntry {
+  id: string;
+  name: string;
+  type: string | null;
+  category: string | null;
+  power: number | null;
+  accuracy: number | null;   // null = never misses
+  pp: number | null;
+  genIntroduced: number | null;
+  latestGen: number;
+  shortDesc: string | null;
+}
+
+export interface MovePayload {
+  id: string;
+  gen: number;
+  name: string;
+  availableGens: number[];
+  genIntroduced: number | null;
+  type: string | null;
+  category: string | null;
+  power: number | null;
+  accuracy: number | null;
+  pp: number | null;
+  priority: number;
+  target: string | null;
+  flags: string[];
+  secondaryChance: number | null;
+  critRatio: number | null;
+  zPower: number | null;       // gen 7 only
+  maxPower: number | null;     // gen 8 only
+  machine: string | null;      // 'TM26' in this generation
+  shortDesc: string | null;
+  desc: string | null;
+  flavorText: FlavorEntry[];   // this generation's games
+  /** Pokémon that learn it in this generation, grouped by method. */
+  learners: Partial<Record<MoveMethod, Learner[]>>;
+}
+
+export interface Learner extends PokemonRef {
+  levels: number[];   // method 'L' only; a Pokémon can learn a move at several levels
+}
+
+export interface AbilityDexEntry {
+  id: string;
+  name: string;
+  genIntroduced: number | null;
+  latestGen: number;
+  shortDesc: string | null;
+  pokemonCount: number;   // at its latest generation
+}
+
+export interface AbilityPayload {
+  id: string;
+  gen: number;
+  name: string;
+  availableGens: number[];
+  genIntroduced: number | null;
+  shortDesc: string | null;
+  desc: string | null;
+  flavorText: FlavorEntry[];
+  pokemon: (PokemonRef & { slot: '0' | '1' | 'H' })[];
+}
+
+export interface ItemDexEntry {
+  id: string;             // veekun identifier: 'sitrus-berry'
+  name: string;
+  category: string | null;
+  pocket: string | null;
+  cost: number | null;
+  genIntroduced: number | null;
+  shortDesc: string | null;   // veekun's short effect, else Showdown's latest battle text
+  sprite: string | null;
+}
+
+export interface ItemPayload {
+  id: string;
+  gen: number;
+  name: string;
+  availableGens: number[];
+  category: string | null;
+  pocket: string | null;
+  cost: number | null;
+  flingPower: number | null;
+  flingEffect: string | null;
+  genIntroduced: number | null;
+  sprite: string | null;
+  shortEffect: string | null;   // veekun, generation-independent
+  effect: string | null;        // veekun's long prose; sections as "Heading\n:   text"
+  /** Showdown's in-battle behaviour in this generation; null for items that don't matter in battle. */
+  battle: {
+    shortDesc: string | null;
+    desc: string | null;
+    isBerry: boolean;
+    naturalGift: { type: string; power: number } | null;
+    megaEvolves: string | null;
+    zMoveType: string | null;
+    users: string[];
+  } | null;
+  flavorText: FlavorEntry[];
+  /** Wild Pokémon that can hold it, per game of this generation. */
+  heldBy: { version: string; rows: (PokemonRef & { rarity: number })[] }[];
+  /** Evolutions this item triggers in this generation. */
+  evolves: { from: PokemonRef; to: PokemonRef; method: string }[];
 }
 
 // ---------------------------------------------------------------- helpers
@@ -270,6 +392,35 @@ function spritesFor(spriteId: number | null, num: number | null, gen: number) {
     shiny: gen >= SHINY_FROM_GEN ? firstExisting(chain('/shiny')) : null,
     artwork: firstExisting(ids.flatMap(id => [`other/official-artwork/${id}.png`, `other/home/${id}.png`])),
   };
+}
+
+// static thumbnails for lists; the same few hundred files are asked for over and over
+const thumbCache = new Map<string, string | null>();
+
+function thumbnail(spriteId: number | null, num: number | null): string | null {
+  const key = `${spriteId}/${num}`;
+  if (!thumbCache.has(key)) {
+    const ids = [...new Set([spriteId, num].filter((n): n is number => n != null))];
+    thumbCache.set(key, firstExisting(ids.map(id => `${id}.png`)));
+  }
+  return thumbCache.get(key)!;
+}
+
+const pokemonRef = (r: any): PokemonRef => ({
+  id: r.showdown_id,
+  name: r.name,
+  num: r.num,
+  forme: r.forme || null,
+  types: [r.type1, r.type2].filter(Boolean),
+  sprite: thumbnail(r.sprite_id, r.num),
+});
+
+/** Item art is keyed by veekun identifier; Z-Crystals and a few others only have a '--held' or '--bag' variant. */
+function itemSprite(identifier: string): string | null {
+  for (const f of [`${identifier}.png`, `${identifier}--held.png`, `${identifier}--bag.png`]) {
+    if (fs.existsSync(path.join(ITEM_SPRITE_ROOT, f))) return f;
+  }
+  return null;
 }
 
 // ------------------------------------------------------------- statements
@@ -678,6 +829,265 @@ export function listAll(): DexEntry[] {
     sprite: firstExisting([`${r.num}.png`]),   // static thumbnail; the table is 1,025 rows
   }));
   return dexCache;
+}
+
+// ---------------------------------------------------------------- moves
+
+const REF_COLS = 'p.showdown_id, p.name, p.num, p.forme, p.sprite_id, p.type1, p.type2';
+
+const qMoveDex = db.prepare(`
+  SELECT move_id, name, type, category, power, accuracy, pp, gen_introduced, gen, short_desc
+  FROM move_gen m
+  WHERE gen = (SELECT MAX(gen) FROM move_gen WHERE move_id = m.move_id)
+  ORDER BY name
+`);
+const qMoveGens = db.prepare('SELECT gen FROM move_gen WHERE move_id = ? ORDER BY gen');
+const qMove = db.prepare(`
+  SELECT m.*, mg.label AS machine FROM move_gen m
+  LEFT JOIN machine_gen mg ON mg.move_id = m.move_id AND mg.gen = m.gen
+  WHERE m.move_id = ? AND m.gen = ?
+`);
+const qMoveFlavor = db.prepare(`
+  SELECT version_group, text FROM move_flavor_text
+  WHERE move_id = ? AND gen = ? GROUP BY version_group ORDER BY MIN(vg_order)
+`);
+const qLearners = db.prepare(`
+  SELECT DISTINCT l.method, l.level, ${REF_COLS}
+  FROM learnset l JOIN pokemon_gen p ON p.showdown_id = l.showdown_id AND p.gen = l.gen
+  WHERE l.move_id = ? AND l.gen = ?
+  ORDER BY p.num, p.rowid, l.level
+`);
+
+let moveDexCache: MoveDexEntry[] | null = null;
+
+/** Every move at the latest generation it appears in. */
+export function listMoves(): MoveDexEntry[] {
+  return moveDexCache ??= (qMoveDex.all() as any[]).map(r => ({
+    id: r.move_id,
+    name: r.name,
+    type: r.type,
+    category: r.category,
+    power: r.power || null,
+    accuracy: r.accuracy === 0 ? null : r.accuracy,
+    pp: r.pp,
+    genIntroduced: r.gen_introduced,
+    latestGen: r.gen,
+    shortDesc: r.short_desc,
+  }));
+}
+
+export function getMove(rawId: string, wantedGen?: number): MovePayload | null {
+  const id = toID(rawId);
+  const availableGens = (qMoveGens.all(id) as any[]).map(r => r.gen);
+  const gen = resolveGen(availableGens, wantedGen);
+  if (gen == null) return null;
+  const m = qMove.get(id, gen) as any;
+  if (!m) return null;
+
+  // one entry per Pokémon per method; level-up collects every level
+  const learners: Partial<Record<MoveMethod, Learner[]>> = {};
+  const seen = new Map<string, Learner>();
+  for (const r of qLearners.all(id, gen) as any[]) {
+    const key = `${r.method}|${r.showdown_id}`;
+    let entry = seen.get(key);
+    if (!entry) {
+      entry = { ...pokemonRef(r), levels: [] };
+      seen.set(key, entry);
+      (learners[r.method as MoveMethod] ??= []).push(entry);
+    }
+    if (r.method === 'L' && r.level != null && !entry.levels.includes(r.level)) entry.levels.push(r.level);
+  }
+
+  return {
+    id: m.move_id,
+    gen,
+    name: m.name,
+    availableGens,
+    genIntroduced: m.gen_introduced,
+    type: m.type,
+    category: m.category,
+    power: m.power || null,
+    accuracy: m.accuracy === 0 ? null : m.accuracy,
+    pp: m.pp,
+    priority: m.priority ?? 0,
+    target: m.target,
+    flags: m.flags ? m.flags.split(' ') : [],
+    secondaryChance: m.secondary_chance,
+    critRatio: m.crit_ratio,
+    zPower: m.z_power,
+    maxPower: m.max_power,
+    machine: m.machine,
+    shortDesc: m.short_desc,
+    desc: m.desc,
+    flavorText: (qMoveFlavor.all(id, gen) as any[]).map(r => ({ versionGroup: r.version_group, text: r.text })),
+    learners,
+  };
+}
+
+// ------------------------------------------------------------- abilities
+
+const qAbilityDex = db.prepare(`
+  SELECT ability_id, name, gen_introduced, gen, short_desc FROM ability_gen a
+  WHERE gen = (SELECT MAX(gen) FROM ability_gen WHERE ability_id = a.ability_id)
+  ORDER BY name
+`);
+const qAbilityGens = db.prepare('SELECT gen FROM ability_gen WHERE ability_id = ? ORDER BY gen');
+const qAbilityRow = db.prepare('SELECT * FROM ability_gen WHERE ability_id = ? AND gen = ?');
+const qAbilityFlavor = db.prepare(`
+  SELECT version_group, text FROM ability_flavor_text
+  WHERE ability_id = ? AND gen = ? GROUP BY version_group ORDER BY MIN(vg_order)
+`);
+// pokemon_gen stores ability display names, not ids
+const qAbilityPokemon = db.prepare(`
+  SELECT ${REF_COLS},
+         CASE WHEN p.ability0 = @name THEN '0' WHEN p.ability1 = @name THEN '1' ELSE 'H' END AS slot
+  FROM pokemon_gen p
+  WHERE p.gen = @gen AND (p.ability0 = @name OR p.ability1 = @name OR p.abilityH = @name)
+  ORDER BY p.num, p.rowid
+`);
+const qAbilitySlots = db.prepare('SELECT gen, ability0, ability1, abilityH FROM pokemon_gen');
+
+let abilityDexCache: AbilityDexEntry[] | null = null;
+
+export function listAbilities(): AbilityDexEntry[] {
+  if (abilityDexCache) return abilityDexCache;
+  // ability name -> gen -> number of forms carrying it, in one pass over pokemon_gen
+  const counts = new Map<string, Map<number, number>>();
+  for (const r of qAbilitySlots.all() as any[]) {
+    for (const name of new Set([r.ability0, r.ability1, r.abilityH].filter(Boolean) as string[])) {
+      const byGen = counts.get(name) ?? new Map<number, number>();
+      counts.set(name, byGen);
+      byGen.set(r.gen, (byGen.get(r.gen) ?? 0) + 1);
+    }
+  }
+  return abilityDexCache = (qAbilityDex.all() as any[]).map(r => {
+    // Showdown's gen-9 data lists every ability, including ones no Pokémon in
+    // Scarlet/Violet has (Aerilate); count where it was last actually used
+    const byGen = counts.get(r.name);
+    const gens = byGen ? [...byGen.keys()].sort((a, b) => b - a) : [];
+    return {
+      id: r.ability_id,
+      name: r.name,
+      genIntroduced: r.gen_introduced,
+      latestGen: gens[0] ?? r.gen,
+      shortDesc: r.short_desc,
+      pokemonCount: gens.length ? byGen!.get(gens[0])! : 0,
+    };
+  });
+}
+
+export function getAbility(rawId: string, wantedGen?: number): AbilityPayload | null {
+  const id = toID(rawId);
+  const availableGens = (qAbilityGens.all(id) as any[]).map(r => r.gen);
+  const gen = resolveGen(availableGens, wantedGen);
+  if (gen == null) return null;
+  const a = qAbilityRow.get(id, gen) as any;
+  if (!a) return null;
+  return {
+    id: a.ability_id,
+    gen,
+    name: a.name,
+    availableGens,
+    genIntroduced: a.gen_introduced,
+    shortDesc: a.short_desc,
+    desc: a.desc,
+    flavorText: (qAbilityFlavor.all(id, gen) as any[]).map(r => ({ versionGroup: r.version_group, text: r.text })),
+    pokemon: (qAbilityPokemon.all({ gen, name: a.name }) as any[]).map(r => ({ ...pokemonRef(r), slot: r.slot })),
+  };
+}
+
+// ----------------------------------------------------------------- items
+
+const qItemDex = db.prepare(`
+  SELECT i.*, (SELECT short_desc FROM item_gen g WHERE g.showdown_id = i.showdown_id ORDER BY gen DESC LIMIT 1) AS battle_desc
+  FROM item i ORDER BY i.name, i.item_id
+`);
+const qItem = db.prepare('SELECT * FROM item WHERE identifier = ?');
+const qItemGens = db.prepare(`
+  SELECT gen FROM item_avail WHERE item_id = @item_id
+  UNION SELECT gen FROM item_gen WHERE showdown_id = @showdown_id
+  ORDER BY gen
+`);
+const qItemGen = db.prepare('SELECT * FROM item_gen WHERE showdown_id = ? AND gen = ?');
+const qItemFlavor = db.prepare(`
+  SELECT version_group, text FROM item_flavor_text
+  WHERE item_id = ? AND gen = ? GROUP BY version_group ORDER BY MIN(vg_order)
+`);
+const qHeldBy = db.prepare(`
+  SELECT w.version, w.version_order, w.rarity, ${REF_COLS}
+  FROM wild_held_item w JOIN pokemon_gen p ON p.showdown_id = w.form_id AND p.gen = w.gen
+  WHERE w.item_id = ? AND w.gen = ?
+  ORDER BY w.version_order, p.num, p.rowid
+`);
+const qEvolvesWith = db.prepare(`
+  SELECT ${REF_COLS}, p.evo_type, p.evo_item, p.evo_level, p.evo_move, p.evo_condition, p.evo_region,
+         q.showdown_id AS from_id, q.name AS from_name, q.num AS from_num, q.forme AS from_forme,
+         q.sprite_id AS from_sprite_id, q.type1 AS from_type1, q.type2 AS from_type2
+  FROM pokemon_gen p JOIN pokemon_gen q ON q.showdown_id = p.prevo AND q.gen = p.gen
+  WHERE p.evo_item_id = ? AND p.gen = ? AND p.evo_type IN ('useItem', 'trade', 'levelHold')
+  ORDER BY p.num, p.rowid
+`);
+
+let itemDexCache: ItemDexEntry[] | null = null;
+
+export function listItems(): ItemDexEntry[] {
+  return itemDexCache ??= (qItemDex.all() as any[]).map(r => ({
+    id: r.identifier,
+    name: r.name,
+    category: r.category,
+    pocket: r.pocket,
+    cost: r.cost,
+    genIntroduced: r.gen_introduced,
+    shortDesc: r.short_effect ?? r.battle_desc ?? null,
+    sprite: itemSprite(r.identifier),
+  }));
+}
+
+export function getItem(identifier: string, wantedGen?: number): ItemPayload | null {
+  const i = qItem.get(identifier) as any;
+  if (!i) return null;
+  const availableGens = (qItemGens.all({ item_id: i.item_id, showdown_id: i.showdown_id }) as any[]).map(r => r.gen);
+  const gen = resolveGen(availableGens, wantedGen) ?? 9;
+  const b = qItemGen.get(i.showdown_id, gen) as any;
+
+  const heldBy = new Map<string, (PokemonRef & { rarity: number })[]>();
+  for (const r of qHeldBy.all(i.item_id, gen) as any[]) {
+    if (!heldBy.has(r.version)) heldBy.set(r.version, []);
+    heldBy.get(r.version)!.push({ ...pokemonRef(r), rarity: r.rarity });
+  }
+
+  return {
+    id: i.identifier,
+    gen,
+    name: i.name,
+    availableGens,
+    category: i.category,
+    pocket: i.pocket,
+    cost: i.cost,
+    flingPower: i.fling_power ?? b?.fling_power ?? null,
+    flingEffect: i.fling_effect,
+    genIntroduced: i.gen_introduced,
+    sprite: itemSprite(i.identifier),
+    shortEffect: i.short_effect,
+    effect: i.effect,
+    battle: b ? {
+      shortDesc: b.short_desc,
+      desc: b.desc,
+      isBerry: Boolean(b.is_berry),
+      naturalGift: b.natural_gift_type ? { type: b.natural_gift_type, power: b.natural_gift_power } : null,
+      megaEvolves: b.mega_evolves,
+      zMoveType: b.z_move_type,
+      users: b.item_user ? JSON.parse(b.item_user) : [],
+    } : null,
+    flavorText: (qItemFlavor.all(i.item_id, gen) as any[]).map(r => ({ versionGroup: r.version_group, text: r.text })),
+    heldBy: [...heldBy].map(([version, rows]) => ({ version, rows })),
+    evolves: (qEvolvesWith.all(i.showdown_id, gen) as any[]).map(r => ({
+      from: pokemonRef({ showdown_id: r.from_id, name: r.from_name, num: r.from_num, forme: r.from_forme,
+                         sprite_id: r.from_sprite_id, type1: r.from_type1, type2: r.from_type2 }),
+      to: pokemonRef(r),
+      method: evoMethod(r),
+    })),
+  };
 }
 
 // -------------------------------------------------------------- SQL page

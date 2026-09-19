@@ -91,7 +91,7 @@ because it has one type.
 
 ### The tables
 
-Twelve tables, grouped by what they describe. The full column lists are in
+Twenty-one tables, grouped by what they describe. The full column lists are in
 the sidebar of the `/sql` page; here is what each one is *for*.
 
 **Per generation** — these have a `gen` column and are the heart of the app:
@@ -105,6 +105,13 @@ the sidebar of the `/sql` page; here is what each one is *for*.
 | `type_chart` | attacking × defending × generation | weakness grid |
 | `machine_gen` | move × generation | TM/HM/TR number |
 | `encounter` | form × game × area × method | where to catch it (gens 1–8) |
+| `item_gen` | battle item × generation | what a held item does in battle |
+| `wild_held_item` | form × game × item | which wild Pokémon hold an item (gens 3–7) |
+| `move_flavor_text`, `ability_flavor_text`, `item_flavor_text` | thing × version group | in-game descriptions |
+
+**Items** — `item` is the whole bag from veekun (category, pocket, cost,
+effect prose), one row per item with no `gen`; `item_avail` says which
+generations it exists in, and `item.showdown_id` joins to `item_gen`.
 
 **Per species** — no `gen`; one row per national dex number:
 

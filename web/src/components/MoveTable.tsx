@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { Move } from '../types';
 import { TypePill } from './TypePill';
 import { Tooltip } from './Tooltip';
@@ -5,7 +6,7 @@ import { Tooltip } from './Tooltip';
 /** First column depends on how the move is learnt: a level, a TM number, or nothing. */
 export type MoveTableLead = 'level' | 'machine' | 'none';
 
-export function MoveTable({ moves, lead, empty }: { moves: Move[]; lead: MoveTableLead; empty?: string }) {
+export function MoveTable({ moves, lead, gen, empty }: { moves: Move[]; lead: MoveTableLead; gen: number; empty?: string }) {
   if (!moves.length) {
     return <p className="py-6 text-sm text-muted">{empty ?? 'No moves recorded for this generation.'}</p>;
   }
@@ -32,7 +33,9 @@ export function MoveTable({ moves, lead, empty }: { moves: Move[]; lead: MoveTab
               {lead === 'level' && <td className="py-2 pl-4 pr-3 text-right tabular-nums text-muted">{m.level}</td>}
               {lead === 'machine' && <td className="py-2 pl-4 pr-3 tabular-nums text-muted">{m.machine ?? '—'}</td>}
               <td className={`py-2 pr-3 font-medium ${leadLabel ? '' : 'pl-4'}`}>
-                <Tooltip summary={m.shortDesc} detail={m.desc}>{m.name}</Tooltip>
+                <Tooltip summary={m.shortDesc} detail={m.desc}>
+                  <Link to={`/move/${m.moveId}?gen=${gen}`} className="hover:text-accent">{m.name}</Link>
+                </Tooltip>
               </td>
               <td className="py-2 pr-3">{m.type ? <TypePill type={m.type} size="sm" /> : '—'}</td>
               <td className="py-2 pr-3 text-muted">{m.category ?? '—'}</td>

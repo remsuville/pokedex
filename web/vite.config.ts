@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/sprites': 'http://localhost:3000',
+      '/item-sprites': 'http://localhost:3000',
     },
   },
 });

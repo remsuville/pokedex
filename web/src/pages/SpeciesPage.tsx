@@ -12,6 +12,7 @@ import { PixelSprite } from '../components/PixelSprite';
 import { Tooltip } from '../components/Tooltip';
 import { TypeDefenses } from '../components/TypeDefenses';
 import { EvolutionChain } from '../components/EvolutionChain';
+import { GenTabs } from '../components/GenTabs';
 
 const link = (id: string, gen: number) => `/pokemon/${id}?gen=${gen}`;
 
@@ -72,22 +73,7 @@ export function SpeciesPage() {
           <div className="mt-2 flex gap-1.5">{d.types.map(t => <TypePill key={t} type={t} />)}</div>
         </div>
 
-        <nav className="flex flex-wrap gap-1" aria-label="Generation">
-          {d.availableGens.map(g => (
-            <button
-              key={g}
-              onClick={() => setParams({ gen: String(g) })}
-              aria-current={g === gen ? 'true' : undefined}
-              className={`rounded-[4px] px-2.5 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                g === gen
-                  ? 'bg-accent text-white'
-                  : 'border border-hair bg-panel text-muted hover:border-accent hover:text-accent'
-              }`}
-            >
-              Gen {ROMAN[g]}
-            </button>
-          ))}
-        </nav>
+        <GenTabs gens={d.availableGens} current={gen} onChange={g => setParams({ gen: String(g) })} />
       </header>
 
       {d.forms.length > 1 && (
@@ -141,7 +127,9 @@ export function SpeciesPage() {
               ['Abilities', <ol className="space-y-0.5">
                 {d.abilities.map(a => (
                   <li key={a.slot}>
-                    <Tooltip summary={a.shortDesc} detail={a.desc}>{a.name}</Tooltip>
+                    <Tooltip summary={a.shortDesc} detail={a.desc}>
+                      <Link to={`/ability/${fold(a.name)}?gen=${gen}`} className="hover:text-accent">{a.name}</Link>
+                    </Tooltip>
                     {a.slot === 'H' && <span className="ml-1 text-xs text-muted">(hidden)</span>}
                   </li>
                 ))}

@@ -115,3 +115,124 @@ export interface DexEntry {
   bst: number;
   sprite: string | null;
 }
+
+/** A Pokémon in a list on a move, ability or item page. */
+export interface PokemonRef {
+  id: string;
+  name: string;
+  num: number | null;
+  forme: string | null;
+  types: string[];
+  sprite: string | null;
+}
+
+export interface FlavorEntry {
+  versionGroup: string;   // 'Ultra Sun/Ultra Moon'
+  text: string;
+}
+
+export interface MoveDexEntry {
+  id: string;
+  name: string;
+  type: string | null;
+  category: string | null;
+  power: number | null;
+  accuracy: number | null;   // null = never misses
+  pp: number | null;
+  genIntroduced: number | null;
+  latestGen: number;
+  shortDesc: string | null;
+}
+
+export interface MovePayload {
+  id: string;
+  gen: number;
+  name: string;
+  availableGens: number[];
+  genIntroduced: number | null;
+  type: string | null;
+  category: string | null;
+  power: number | null;
+  accuracy: number | null;
+  pp: number | null;
+  priority: number;
+  target: string | null;
+  flags: string[];
+  secondaryChance: number | null;
+  critRatio: number | null;
+  zPower: number | null;       // gen 7 only
+  maxPower: number | null;     // gen 8 only
+  machine: string | null;      // 'TM26' in this generation
+  shortDesc: string | null;
+  desc: string | null;
+  flavorText: FlavorEntry[];   // this generation's games
+  /** Pokémon that learn it in this generation, grouped by method. */
+  learners: Partial<Record<MoveMethod, Learner[]>>;
+}
+
+export interface Learner extends PokemonRef {
+  levels: number[];   // method 'L' only; a Pokémon can learn a move at several levels
+}
+
+export interface AbilityDexEntry {
+  id: string;
+  name: string;
+  genIntroduced: number | null;
+  latestGen: number;
+  shortDesc: string | null;
+  pokemonCount: number;   // at its latest generation
+}
+
+export interface AbilityPayload {
+  id: string;
+  gen: number;
+  name: string;
+  availableGens: number[];
+  genIntroduced: number | null;
+  shortDesc: string | null;
+  desc: string | null;
+  flavorText: FlavorEntry[];
+  pokemon: (PokemonRef & { slot: '0' | '1' | 'H' })[];
+}
+
+export interface ItemDexEntry {
+  id: string;             // veekun identifier: 'sitrus-berry'
+  name: string;
+  category: string | null;
+  pocket: string | null;
+  cost: number | null;
+  genIntroduced: number | null;
+  shortDesc: string | null;   // veekun's short effect, else Showdown's latest battle text
+  sprite: string | null;
+}
+
+export interface ItemPayload {
+  id: string;
+  gen: number;
+  name: string;
+  availableGens: number[];
+  category: string | null;
+  pocket: string | null;
+  cost: number | null;
+  flingPower: number | null;
+  flingEffect: string | null;
+  genIntroduced: number | null;
+  sprite: string | null;
+  shortEffect: string | null;   // veekun, generation-independent
+  effect: string | null;        // veekun's long prose; sections as "Heading\n:   text"
+  /** Showdown's in-battle behaviour in this generation; null for items that don't matter in battle. */
+  battle: {
+    shortDesc: string | null;
+    desc: string | null;
+    isBerry: boolean;
+    naturalGift: { type: string; power: number } | null;
+    megaEvolves: string | null;
+    zMoveType: string | null;
+    users: string[];
+  } | null;
+  flavorText: FlavorEntry[];
+  /** Wild Pokémon that can hold it, per game of this generation. */
+  heldBy: { version: string; rows: (PokemonRef & { rarity: number })[] }[];
+  /** Evolutions this item triggers in this generation. */
+  evolves: { from: PokemonRef; to: PokemonRef; method: string }[];
+}

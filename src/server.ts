@@ -1,7 +1,10 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { getSpecies, search, listByGen, listAll, schema, runQuery } from './db/queries.js';
+import {
+  getSpecies, search, listByGen, listAll, schema, runQuery,
+  listMoves, getMove, listAbilities, getAbility, listItems, getItem,
+} from './db/queries.js';
 
 const app = new Hono();
 
@@ -20,6 +23,31 @@ app.get('/api/species/:id', (c) => {
   const data = getSpecies(c.req.param('id'), gen);
   return data ? c.json(data) : c.json({ error: 'not found' }, 404);
 });
+
+// The other three dexes follow the same shape: a cached list, and a detail
+// endpoint that takes an optional gen and reports which one it served.
+const parseGen = (raw: string | undefined): number | undefined | null => {
+  if (raw == null) return undefined;
+  const gen = Number(raw);
+  return Number.isInteger(gen) && gen >= 1 && gen <= 9 ? gen : null;
+};
+
+app.get('/api/moves', (c) => { c.header('Cache-Control', 'public, max-age=3600'); return c.json(listMoves()); });
+app.get('/api/abilities', (c) => { c.header('Cache-Control', 'public, max-age=3600'); return c.json(listAbilities()); });
+app.get('/api/items', (c) => { c.header('Cache-Control', 'public, max-age=3600'); return c.json(listItems()); });
+
+for (const [route, get] of [
+  ['/api/moves/:id', getMove],
+  ['/api/abilities/:id', getAbility],
+  ['/api/items/:id', getItem],
+] as const) {
+  app.get(route, (c) => {
+    const gen = parseGen(c.req.query('gen'));
+    if (gen === null) return c.json({ error: 'bad gen' }, 400);
+    const data = get(c.req.param('id'), gen);
+    return data ? c.json(data) : c.json({ error: 'not found' }, 404);
+  });
+}
 
 app.get('/api/search', (c) => {
   const q = c.req.query('q') ?? '';
@@ -43,6 +71,11 @@ app.post('/api/query', async (c) => {
     return c.json({ error: e.message }, 400);
   }
 });
+
+app.use('/item-sprites/*', serveStatic({
+  root: './vendor/sprites/sprites/items',
+  rewriteRequestPath: (p) => p.replace(/^\/item-sprites/, ''),
+}));
 
 app.use('/sprites/*', serveStatic({
   root: './vendor/sprites/sprites/pokemon',

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Move, MoveMethod } from '../types';
 import { ROMAN } from '../lib/api';
 import { Panel } from './DataTable';
+import { TabStrip } from './TabStrip';
 import { MoveTable, type MoveTableLead } from './MoveTable';
 
 interface Props {
@@ -45,27 +46,14 @@ export function MovesPanel(props: Props) {
 
   return (
     <Panel title={`Moves (Gen ${ROMAN[gen]})`}>
-      <div role="tablist" aria-label="Learn method" className="-mx-4 flex flex-wrap gap-1 border-b border-hair px-4 pt-3 pb-3">
-        {tabs.map(t => {
-          const on = t.key === current.key;
-          return (
-            <button
-              key={t.key}
-              role="tab"
-              aria-selected={on}
-              onClick={() => setActive(t.key)}
-              className={`rounded-[4px] px-2.5 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                on ? 'bg-ink text-white' : 'text-muted hover:bg-page hover:text-ink'
-              }`}
-            >
-              {t.label(gen)}
-              <span className={`ml-1.5 tabular-nums ${on ? 'text-white/70' : 'text-muted/70'}`}>{moves[t.key]!.length}</span>
-            </button>
-          );
-        })}
-      </div>
+      <TabStrip
+        tabs={tabs.map(t => ({ key: t.key, label: t.label(gen), count: moves[t.key]!.length }))}
+        active={current.key}
+        onChange={setActive}
+        label="Learn method"
+      />
       {note && <p className="pt-3 text-sm text-muted">{note}</p>}
-      <MoveTable moves={moves[current.key]!} lead={current.lead} />
+      <MoveTable moves={moves[current.key]!} lead={current.lead} gen={gen} />
     </Panel>
   );
 }

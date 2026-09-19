@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { EncounterGame } from '../types';
 import { ROMAN, titleCase } from '../lib/api';
 import { Panel } from './DataTable';
+import { TabStrip } from './TabStrip';
 
 interface Props { games: EncounterGame[]; via: string | null; gen: number; name: string }
 
@@ -41,25 +42,12 @@ export function EncounterPanel({ games, via, gen, name }: Props) {
 
   return (
     <Panel title={title}>
-      <div role="tablist" aria-label="Game" className="-mx-4 flex flex-wrap gap-1 border-b border-hair px-4 pt-3 pb-3">
-        {games.map(g => {
-          const on = g.version === game.version;
-          return (
-            <button
-              key={g.version}
-              role="tab"
-              aria-selected={on}
-              onClick={() => setActive(g.version)}
-              className={`rounded-[4px] px-2.5 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                on ? 'bg-ink text-white' : 'text-muted hover:bg-page hover:text-ink'
-              }`}
-            >
-              {g.version}
-              <span className={`ml-1.5 tabular-nums ${on ? 'text-white/70' : 'text-muted/70'}`}>{g.rows.length}</span>
-            </button>
-          );
-        })}
-      </div>
+      <TabStrip
+        tabs={games.map(g => ({ key: g.version, label: g.version, count: g.rows.length }))}
+        active={game.version}
+        onChange={setActive}
+        label="Game"
+      />
       {via && <p className="pt-3 text-sm text-muted">Showing locations for {via}; this form has no entries of its own.</p>}
       <div className="-mx-4 overflow-x-auto">
         <table className="w-full min-w-[560px] text-sm">
