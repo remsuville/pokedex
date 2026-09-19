@@ -3,3 +3,4 @@ data/*.sqlite*
 dist/
 .DS_Store
 vendor/
+build/
