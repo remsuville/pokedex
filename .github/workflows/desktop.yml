@@ -30,9 +30,11 @@ jobs:
           git clone --depth 1 --filter=blob:none --sparse https://github.com/PokeAPI/sprites.git vendor/sprites
           git -C vendor/sprites sparse-checkout set sprites/items
 
+      # --ignore-scripts: better-sqlite3 ships a prebuilt binary for Windows,
+      # and node-gyp would otherwise try (and fail) to compile it
       - name: Build database
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npm run build:db
       - name: Build web app
         run: |
