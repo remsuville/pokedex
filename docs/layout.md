@@ -1,11 +1,14 @@
 ~/pokemon/pokedex/
+├── README.md               ← start here
 ├── package.json            ← backend deps
 ├── build-db.ts             ← the ETL
 ├── tsconfig.json
+├── .github/workflows/
+│   └── desktop.yml         ← CI: Windows installer on a desktop-v* tag
 ├── docs/
 │   ├── ARCHITECTURE.md     ← the long-form guide
 │   ├── SQL_GUIDE.md        ← learn SQL on this database
-│   ├── PACKAGING.md        ← shipping it as a Windows .exe
+│   ├── PACKAGING.md        ← the Windows .exe: build, release, install
 │   ├── layout.md           ← this file
 │   └── next_steps.md       ← roadmap
 ├── data/
@@ -25,9 +28,12 @@
 │   └── db/
 │       └── queries.ts      ← all the SQL
 ├── desktop/                ← Electron shell, own npm project
-│   ├── main.ts
-│   ├── manifest.json
-│   └── electron-builder.yml
+│   ├── main.ts             ← starts the server, opens the window
+│   ├── manifest.json       ← sprite packs: sizes, hashes, URL (committed)
+│   ├── electron-builder.yml
+│   ├── package.json        ← the installer's version number lives here
+│   ├── tsconfig.json
+│   └── resources/icon.png
 └── web/                    ← separate npm project
     ├── package.json        ← frontend deps
     ├── vite.config.ts

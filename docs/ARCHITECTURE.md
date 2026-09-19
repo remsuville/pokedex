@@ -4,7 +4,8 @@ A self-hosted, offline Pokédex covering all nine generations, with
 generation-accurate stats, typings, abilities and learnsets. Built to
 reproduce the depth of pokemondb.net and the generation-switching of
 serebii.net, running entirely on local hardware with no external API calls
-at runtime.
+at runtime. It runs as a LAN web app from source or as a Windows desktop app
+(`docs/PACKAGING.md`); both are the same code.
 
 ---
 
@@ -42,16 +43,19 @@ or typings. It cannot reconstruct a Gen 1 page.
  │ PokeAPI/     │            ▼                     │                    │
  │ sprites      │      ┌────────────┐         ┌─────────┐               │
  └──────────────┘      │ SQLite     │────────▶│ server  │◀──── /api ────┘
-                       │ 44 MB      │         │ Hono    │      /sprites
+                       │ 55 MB      │         │ Hono    │      /sprites
                        └────────────┘         │ :3000   │
                                               └─────────┘
+                                                   ▲
+                                    desktop/main.ts starts the same server on
+                                    127.0.0.1 inside Electron and serves web/dist
 ```
 
 **The central decision:** all joins and merges happen once, at build time,
 not per request. The runtime never parses a CSV, never resolves a name
 mismatch, never computes a cross-source join. It reads indexed SQLite rows.
 This is what makes the app fast enough to feel instant on modest hardware,
-and what makes it portable to a desktop binary later.
+and what let the same code ship as a desktop app without a rewrite.
 
 ### Why two data sources
 
@@ -82,13 +86,16 @@ The ETL's job is to reconcile the two.
 ```
 ~/pokemon/pokedex/
 │
+├── README.md               Start here: download, run from source, docs index
 ├── build-db.ts             ETL — builds the database. Run when data changes.
 ├── package.json            Backend dependencies and scripts
 ├── tsconfig.json
+├── .github/workflows/
+│   └── desktop.yml         CI: builds the Windows installer on a desktop-v* tag
 ├── docs/
 │   ├── ARCHITECTURE.md     This file
 │   ├── SQL_GUIDE.md        SQL from scratch on this database
-│   ├── PACKAGING.md        Shipping it as a Windows app
+│   ├── PACKAGING.md        The desktop app: build, release, install, sprite packs
 │   ├── layout.md           Short file map
 │   └── next_steps.md       Roadmap
 │
@@ -116,7 +123,10 @@ The ETL's job is to reconcile the two.
 ├── desktop/                Separate npm project — the Electron shell (see PACKAGING.md)
 │   ├── main.ts             Starts the server on localhost, opens the window
 │   ├── manifest.json       Sprite packs: sizes, checksums, download URL
-│   └── electron-builder.yml
+│   ├── electron-builder.yml  What goes in the installer; NSIS settings
+│   ├── package.json        Electron + its own better-sqlite3; the installer's version
+│   ├── tsconfig.json       Compiles main.ts and ../src into build/
+│   └── resources/icon.png
 │
 └── web/                    Separate npm project — the frontend
     ├── package.json        Frontend dependencies
@@ -160,10 +170,10 @@ The ETL's job is to reconcile the two.
             └── MoveTable.tsx   Level-up learnset table
 ```
 
-Note that `web/` is its own npm project with its own `package.json`. Frontend
-dependencies install there; backend dependencies install at the root.
-Installing in the wrong place is the single most common mistake when working
-on this repo.
+Note that `web/` and `desktop/` are their own npm projects with their own
+`package.json`. Frontend dependencies install in `web/`, the Electron shell's
+in `desktop/`, backend dependencies at the root. Installing in the wrong
+place is the single most common mistake when working on this repo.
 
 ---
 
@@ -616,6 +626,14 @@ npm update @pkmn/dex @pkmn/data
 cd vendor/pokeapi; git pull; cd ../..
 npm run build:db
 ```
+If the sprite folders changed too, rebuild and re-upload the packs
+(`PACKAGING.md`, "Hosting the packs").
+
+**Ship a new desktop version**
+
+Bump `version` in `desktop/package.json`, commit, push, then push a
+`desktop-v<version>` tag. CI builds the `.exe` and creates the release.
+Step by step in `PACKAGING.md`.
 
 ---
 
@@ -628,8 +646,9 @@ binary — there is no server-side computation to replicate.
 
 **All SQL behind one module.** `queries.ts` is the only file with SQL in it.
 The frontend requests `/api/species/gliscor?gen=9` and receives JSON. That
-boundary means the delivery mechanism can change — browser today, Tauri
-`.exe` later — without touching the Pokédex logic.
+boundary means the delivery mechanism can change without touching the
+Pokédex logic — and it did: the Electron shell reuses `server.ts` and
+`queries.ts` unchanged, adding only paths and a window.
 
 **Generation as a schema column, not application logic.** Putting `gen` in
 the primary key of `pokemon_gen` and `learnset` means generation switching
@@ -657,9 +676,10 @@ There is no migration tooling because there is no state worth migrating.
 | Game data | `@pkmn/dex`, `@pkmn/data` | Only source with per-generation accuracy |
 | Reference data | veekun / PokéAPI CSVs | Encyclopaedic depth |
 | Sprites | `PokeAPI/sprites` | Per-generation art, shinies, BW and Showdown GIFs |
-| API | Hono | Minimal, portable, runs unchanged inside Tauri |
+| API | Hono | Minimal, portable, runs unchanged inside Electron |
 | Frontend | React 19 + Vite | Component reuse across dense repeated tables |
 | Styling | Tailwind v4 | Utility classes suit dense tabular layouts |
+| Desktop | Electron + electron-builder | Reuses the Node backend as-is; NSIS installer built by GitHub Actions |
 | Tooling | oxlint, Prettier, tsx | Fast feedback |
 
 ---
@@ -676,5 +696,6 @@ from Smogon's written analyses are copyrighted by Smogon and its
 contributors and require permission before use in an application. Only the
 former should be bundled.
 
-Any distributable build should fetch assets on first run rather than bundle
-them, so the binary contains only original code and openly-licensed data.
+The desktop installer follows the same rule: it contains only original code,
+the built database and the item sprites, and fetches the Pokémon sprite
+packs on first run from a separate repository (`PACKAGING.md`).

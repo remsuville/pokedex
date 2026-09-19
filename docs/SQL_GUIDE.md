@@ -70,7 +70,7 @@ Three things to notice:
 
 ## 2. What a database is, using this one
 
-A SQLite database is one file (`data/pokedex.sqlite`, ~45 MB) containing
+A SQLite database is one file (`data/pokedex.sqlite`, ~55 MB) containing
 **tables**. A table is a grid: named **columns** across the top, one **row**
 per thing. Here are the first few rows and columns of `pokemon_gen`:
 
@@ -741,8 +741,9 @@ app.get('/api/species/:id', (c) => {
 ```
 
 There's deliberately nothing else here — no SQL, no business logic — so
-that the same `queries.ts` could sit behind a different server (or inside a
-desktop app) unchanged.
+that the same `queries.ts` can sit behind a different server unchanged —
+which is exactly what the desktop app does: `desktop/main.ts` starts this
+server on localhost inside Electron, and the `/sql` page works there too.
 
 ### The SQL page — how your typed query runs
 
@@ -1009,7 +1010,8 @@ EXPLAIN QUERY PLAN SELECT …;
 | `pokemon_gen` ↔ its pre-evolution | `prevo = other.showdown_id` **and** same `gen` |
 | `species` ↔ names / flavour / egg groups / EVs | `species_id` |
 
-**CLI equivalents** (`sqlite3 data/pokedex.sqlite`)
+**CLI equivalents** (`sqlite3 data/pokedex.sqlite`; in the installed
+Windows app the file is `%APPDATA%\Pokedex\pokedex.sqlite`)
 
 ```
 .tables                 list tables
