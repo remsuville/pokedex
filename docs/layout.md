@@ -15,11 +15,19 @@
 │   └── sprites/            ← sprite images
 ├── scratch/
 │   ├── gen-check.ts
-│   └── show.ts
+│   ├── show.ts
+│   └── pack-server.ts      ← local pack server for desktop testing
+├── scripts/
+│   └── pack-sprites.ts     ← builds the sprite zips + manifest
 ├── src/
-│   ├── server.ts           ← Hono API
+│   ├── server.ts           ← Hono API (createApp/start)
+│   ├── assets.ts           ← sprite-pack downloader
 │   └── db/
 │       └── queries.ts      ← all the SQL
+├── desktop/                ← Electron shell, own npm project
+│   ├── main.ts
+│   ├── manifest.json
+│   └── electron-builder.yml
 └── web/                    ← separate npm project
     ├── package.json        ← frontend deps
     ├── vite.config.ts

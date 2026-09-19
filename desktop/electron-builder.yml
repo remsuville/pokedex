@@ -15,7 +15,7 @@ extraResources:
     to: item-sprites
   - from: ../web/dist
     to: web
-  - from: ../build/packs/manifest.json
+  - from: manifest.json
     to: manifest.json
 win:
   target: nsis

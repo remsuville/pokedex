@@ -5,7 +5,8 @@
  *   build/packs/sprites-static.zip     per-gen sprites, thumbnails, shinies   (required)
  *   build/packs/sprites-artwork.zip    official artwork, the species hero      (required)
  *   build/packs/sprites-animated.zip   Black/White and Showdown GIFs           (optional)
- *   build/packs/manifest.json
+ *   desktop/manifest.json              sizes, checksums and where to fetch them — committed,
+ *                                      because the installer must match the uploaded packs
  *
  * The folder list mirrors GEN_SPRITE_DIRS, GEN_ANIMATED_DIR and spritesFor()
  * in src/db/queries.ts — change one, change the other. Entries are stored
@@ -21,6 +22,7 @@ import path from 'node:path';
 
 const SPRITE_ROOT = process.env.SPRITE_ROOT ?? './vendor/sprites/sprites/pokemon';
 const OUT = './build/packs';
+const MANIFEST = './desktop/manifest.json';
 const BASE_URL = process.env.PACK_BASE_URL ?? 'https://github.com/remsuville/pokedex-assets/releases/download/sprites-v1/';
 
 const GEN_DIRS = [
@@ -104,5 +106,5 @@ for (const p of PACKS) {
   manifest.packs.push({ name: p.name, file, size, sha256: hash, required: p.required, description: p.description });
 }
 
-fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-console.log(`\n${OUT}/manifest.json -> ${BASE_URL}`);
+fs.writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + '\n');
+console.log(`\n${MANIFEST} -> ${BASE_URL}`);

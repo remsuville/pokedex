@@ -30,7 +30,7 @@ const bundled = app.isPackaged
       db: path.join(repo, 'data', 'pokedex.sqlite'),
       itemSprites: path.join(repo, 'vendor', 'sprites', 'sprites', 'items'),
       web: path.join(repo, 'web', 'dist'),
-      manifest: path.join(repo, 'build', 'packs', 'manifest.json'),
+      manifest: path.join(repo, 'desktop', 'manifest.json'),
     };
 
 /** Per-user, writable: %APPDATA%\Pokedex on Windows, ~/.config/Pokedex on Linux. */
