@@ -1,5 +1,5 @@
 import type {
-  AbilityDexEntry, AbilityPayload, DexEntry, ItemDexEntry, ItemPayload,
+  AbilityDexEntry, AbilityPayload, AssetStatus, DexEntry, ItemDexEntry, ItemPayload,
   MoveDexEntry, MovePayload, SpeciesPayload,
 } from '../types';
 
@@ -35,6 +35,10 @@ export const fetchDex = cachedList<DexEntry>('/api/species');
 export const fetchMoves = cachedList<MoveDexEntry>('/api/moves');
 export const fetchAbilities = cachedList<AbilityDexEntry>('/api/abilities');
 export const fetchItems = cachedList<ItemDexEntry>('/api/items');
+
+// Sprite packs: the desktop app downloads them on first run; the web build reports managed: false.
+export const fetchAssetStatus = () => getJson<AssetStatus>('/api/assets/status', 'no assets');
+export const startAssets = () => fetch('/api/assets/start', { method: 'POST' }).then(r => r.json() as Promise<AssetStatus>);
 
 export const spriteUrl = (p: string | null) => (p ? `/sprites/${p}` : null);
 export const itemSpriteUrl = (p: string | null) => (p ? `/item-sprites/${p}` : null);
